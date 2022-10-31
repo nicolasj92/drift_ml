@@ -1,0 +1,3 @@
+[submodule "src/drift_ml/datasets/bosch_cnc_machining/raw_data"]
+	path = src/drift_ml/datasets/bosch_cnc_machining/raw_data
+	url = https://github.com/boschresearch/CNC_Machining.git
