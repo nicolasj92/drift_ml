@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 from scipy.signal import stft
 from sklearn.model_selection import train_test_split
 import pickle as pkl
-from .utils import augment_xyz_sample
 
 
 def in_notebook():
@@ -233,7 +232,38 @@ class BoschCNCDataloader:
             sample_ids.extend(self.metadata["part_id_samples"][part_id][0].tolist())
         return sample_ids
 
-    def generate_datasets_by_filter(
+    def _generate_mask(self, periods, machines, processes):
+        # Filter general dataset with global filters
+        mask = np.ones_like(self.metadata["part_id_label"]).astype(np.bool)
+        if periods is not None:
+            for period_id, period in enumerate(self.periods):
+                if period not in periods:
+                    mask[self.metadata["part_id_period"] == period_id] = False
+
+        if processes is not None:
+            for op_id, op in enumerate(self.processes):
+                if op not in processes:
+                    mask[self.metadata["part_id_process"] == op_id] = False
+
+        if machines is not None:
+            for machine_id, machine in enumerate(self.machines):
+                if machine not in machines:
+                    mask[self.metadata["part_id_machine"] == machine_id] = False
+
+        return mask
+
+    def generate_datasets_by_size(
+        self,
+        periods=None,
+        machines=None,
+        processes=None,
+        train_size=0.3,
+        val_size=0.2,
+        test_size=0.5,
+    ):
+        assert np.sum([train_size, val_size, test_size]) == 1.0
+
+    def generate_datasets_by_train_filter(
         self,
         periods=None,
         machines=None,
