@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 from scipy.signal import stft
 from sklearn.model_selection import train_test_split
 import pickle as pkl
+from .utils import augment_xyz_sample
 
 
 def in_notebook():
@@ -45,15 +46,14 @@ def find_all_h5s_in_dir(s_dir):
 class BoschCNCDataloader:
     def __init__(
         self,
-        dataset_config_path,
         metadata_path,
+        window_length=4096,
         random_seed=42,
     ):
         self.random_seed = random_seed
         self.metadata_path = metadata_path
 
-        with open(dataset_config_path) as f:
-            self.dataset_config = json.load(f)
+        self.window_length = window_length
 
         self.machines = ["M01", "M02", "M03"]
         self.processes = [
@@ -233,24 +233,83 @@ class BoschCNCDataloader:
             sample_ids.extend(self.metadata["part_id_samples"][part_id][0].tolist())
         return sample_ids
 
-    def generate_datasets_by_period(
-        self, train_periods=["Feb_2019", "Aug_2019", "Feb_2020"], train_split=0.5
+    def generate_datasets_by_filter(
+        self,
+        periods=None,
+        machines=None,
+        processes=None,
+        train_periods=None,
+        train_machines=None,
+        train_processes=None,
+        train_val_split=0.5,
     ):
+        """Generate train/val/test datasets by setting filter criterias
 
-        train_mask = np.ones_like(self.metadata["part_id_label"]).astype(np.bool)
-        for period_id, period in enumerate(self.periods):
-            if period not in train_periods:
-                train_mask[self.metadata["part_id_period"] == period_id] = False
+        At least one of the train filters has to be set, otherwise
+        there will be no test set generated.
+
+        Args:
+            periods list[string]: Defaults to None.
+            machines list[string]: Defaults to None.
+            processes list[string]: Defaults to None.
+            train_periods list[string]: Defaults to None.
+            train_machines list[string]: Defaults to None.
+            train_ops list[string]: Defaults to None.
+            train_val_split float: Defaults to 0.5.
+
+        Raises:
+            ValueError: _description_
+        """
+        if not np.any(
+            np.array([train_periods, train_machines, train_processes], dtype=object)
+        ):
+            raise ValueError("A minimum of one train filter criterium has to be given.")
+
+        # Filter general dataset with global filters
+        global_mask = np.ones_like(self.metadata["part_id_label"]).astype(np.bool)
+        if periods is not None:
+            for period_id, period in enumerate(self.periods):
+                if period not in periods:
+                    global_mask[self.metadata["part_id_period"] == period_id] = False
+
+        if processes is not None:
+            for op_id, op in enumerate(self.processes):
+                if op not in processes:
+                    global_mask[self.metadata["part_id_process"] == op_id] = False
+
+        if machines is not None:
+            for machine_id, machine in enumerate(self.machines):
+                if machine not in machines:
+                    global_mask[self.metadata["part_id_machine"] == machine_id] = False
+
+        # Filter training set with training filters
+        train_mask = np.copy(global_mask)
+        if train_periods is not None:
+            for period_id, period in enumerate(self.periods):
+                if period not in train_periods:
+                    train_mask[self.metadata["part_id_period"] == period_id] = False
+
+        if train_processes is not None:
+            for op_id, op in enumerate(self.processes):
+                if op not in train_processes:
+                    train_mask[self.metadata["part_id_process"] == op_id] = False
+
+        if train_machines is not None:
+            for machine_id, machine in enumerate(self.machines):
+                if machine not in train_machines:
+                    train_mask[self.metadata["part_id_machine"] == machine_id] = False
 
         train_val_part_ids = np.nonzero(train_mask)[0]
         self.train_part_ids, self.val_part_ids = train_test_split(
             train_val_part_ids,
-            train_size=train_split,
+            train_size=train_val_split,
             stratify=self.metadata["part_id_label"][train_mask],
             random_state=self.random_seed,
         )
 
-        self.test_part_ids = np.nonzero(np.logical_not(train_mask))[0]
+        self.test_part_ids = np.nonzero(
+            np.logical_and(global_mask, np.logical_not(train_mask))
+        )[0]
 
         self.train_sample_ids = []
         for part_id in self.train_part_ids:
@@ -271,18 +330,19 @@ class BoschCNCDataloader:
             )
 
 
-class TSFreshBoschCNCDataloader(BoschCNCDataloader):
+class SimpleTSFreshBoschCNCDataloader(BoschCNCDataloader):
     def __init__(
         self,
-        dataset_config_path,
         metadata_path,
+        window_length=4096,
         random_seed=42,
     ):
         super().__init__(
-            dataset_config_path=dataset_config_path,
+            window_length=window_length,
             metadata_path=metadata_path,
             random_seed=random_seed,
         )
+        self.load_metadata()
 
     def load_data(self, tsfresh_features_path, sample_data_y_path):
         self.sample_data_X = pd.read_pickle(tsfresh_features_path)
@@ -292,45 +352,63 @@ class TSFreshBoschCNCDataloader(BoschCNCDataloader):
 class STFTBoschCNCDataloader(BoschCNCDataloader):
     def __init__(
         self,
-        dataset_config_path,
         metadata_path,
+        window_length=4096,
         random_seed=42,
     ):
         super().__init__(
-            dataset_config_path=dataset_config_path,
+            window_length=window_length,
             metadata_path=metadata_path,
             random_seed=random_seed,
         )
+        self.load_metadata()
 
     def load_data(self, data_h5_path):
         with h5py.File(data_h5_path, "r") as f:
             self.sample_data_X = f["stft"][:]
             self.sample_data_y = f["data_y"][:]
 
-        self.train_part_ids = False
-        self.val_part_ids = False
-        self.test_part_ids = False
+
+class NPYBoschCNCDataLoader(BoschCNCDataloader):
+    def __init__(
+        self,
+        metadata_path,
+        window_length=4096,
+        random_seed=42,
+    ):
+        super().__init__(
+            window_length=window_length,
+            metadata_path=metadata_path,
+            random_seed=random_seed,
+        )
+        self.load_metadata()
+
+    def load_data(
+        self,
+        sample_data_x_path,
+        sample_data_y_path,
+    ):
+        self.sample_data_X = np.load(sample_data_x_path)
+        self.sample_data_y = np.load(sample_data_y_path)
 
 
 class RawBoschCNCDataloader(BoschCNCDataloader):
     def __init__(
         self,
-        dataset_config_path,
-        metadata_path="",
+        metadata_path,
+        window_length=4096,
         random_seed=42,
     ):
         super().__init__(
-            dataset_config_path=dataset_config_path,
+            window_length=window_length,
             metadata_path=metadata_path,
             random_seed=random_seed,
         )
 
-        self.sample_data_X = np.empty(
-            (0, self.dataset_config["window_length"], 3), float
-        )
+        self.sample_data_X = np.empty((0, self.window_length, 3), float)
         self.sample_data_y = np.empty((0), bool)
 
-    def create_stft_dataset(self, filename="cnc_dataset_stft_data.h5"):
+    def save_windowed_samples_as_stft(self, filename="cnc_dataset_stft_data.h5"):
         def preprocess(sample, fs=2000):
             specs = []
             for c in range(sample.shape[1]):
@@ -359,33 +437,21 @@ class RawBoschCNCDataloader(BoschCNCDataloader):
 
         hf.close()
 
-    def load_raw_npy_data(
-        self,
-        sample_data_x_path,
-        sample_data_y_path,
-    ):
-        self.sample_data_X = np.load(sample_data_x_path)
-        self.sample_data_y = np.load(sample_data_y_path)
-
-    def save_raw_data_to_files(
+    def save_windowed_samples_as_npy(
         self,
         sample_data_folder_path,
     ):
         np.save(
             os.path.join(
                 sample_data_folder_path,
-                "sample_data_x_raw_ws"
-                + str(self.dataset_config["window_length"])
-                + ".npy",
+                "sample_data_x_raw_ws" + str(self.window_length) + ".npy",
             ),
             self.sample_data_X,
         )
         np.save(
             os.path.join(
                 sample_data_folder_path,
-                "sample_data_y_raw_ws"
-                + str(self.dataset_config["window_length"])
-                + ".npy",
+                "sample_data_y_raw_ws" + str(self.window_length) + ".npy",
             ),
             self.sample_data_y,
         )
@@ -397,7 +463,7 @@ class RawBoschCNCDataloader(BoschCNCDataloader):
         with open(
             os.path.join(
                 metadata_folder_path,
-                "metadata_ws" + str(self.dataset_config["window_length"]) + ".pkl",
+                "metadata_ws" + str(self.window_length) + ".pkl",
             ),
             "wb",
         ) as f:
@@ -426,16 +492,11 @@ class RawBoschCNCDataloader(BoschCNCDataloader):
                             ) as f:
                                 vibration_data = f["vibration_data"][:]
 
-                            n_samples = (
-                                vibration_data.shape[0]
-                                // self.dataset_config["window_length"]
-                            )
+                            n_samples = vibration_data.shape[0] // self.window_length
 
-                            keep_samples = (
-                                n_samples * self.dataset_config["window_length"]
-                            )
+                            keep_samples = n_samples * self.window_length
                             vibration_data = vibration_data[:keep_samples].reshape(
-                                [-1, self.dataset_config["window_length"], 3]
+                                [-1, self.window_length, 3]
                             )
 
                             if label == "good":
