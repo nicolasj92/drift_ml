@@ -25,5 +25,6 @@ def extract_tsfresh_features(samples, featureset):
         column_id="id",
         column_sort="time",
         kind_to_fc_parameters=featureset,
+        chunksize=10,
     )
     return extracted_features
