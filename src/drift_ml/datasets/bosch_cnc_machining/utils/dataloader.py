@@ -44,10 +44,7 @@ def find_all_h5s_in_dir(s_dir):
 
 class BoschCNCDataloader:
     def __init__(
-        self,
-        metadata_path,
-        window_length=4096,
-        random_seed=42,
+        self, metadata_path, window_length=4096, random_seed=42,
     ):
         self.random_seed = random_seed
         self.metadata_path = metadata_path
@@ -102,9 +99,7 @@ class BoschCNCDataloader:
             "part_id_samples": [],
         }
 
-    def load_metadata(
-        self,
-    ):
+    def load_metadata(self,):
         with open(self.metadata_path, "rb") as f:
             self.metadata = pkl.load(f)
 
@@ -252,6 +247,25 @@ class BoschCNCDataloader:
 
         return mask
 
+    def _update_sample_ids(self):
+        self.train_sample_ids = []
+        for part_id in self.train_part_ids:
+            self.train_sample_ids.extend(
+                self.metadata["part_id_samples"][part_id][0].tolist()
+            )
+
+        self.test_sample_ids = []
+        for part_id in self.test_part_ids:
+            self.test_sample_ids.extend(
+                self.metadata["part_id_samples"][part_id][0].tolist()
+            )
+
+        self.val_sample_ids = []
+        for part_id in self.val_part_ids:
+            self.val_sample_ids.extend(
+                self.metadata["part_id_samples"][part_id][0].tolist()
+            )
+
     def generate_datasets_by_size(
         self,
         periods=None,
@@ -262,6 +276,22 @@ class BoschCNCDataloader:
         test_size=0.5,
     ):
         assert np.sum([train_size, val_size, test_size]) == 1.0
+        mask = self._generate_mask(periods, machines, processes)
+
+        part_ids = np.nonzero(mask)[0]
+        train_val_part_ids, self.test_part_ids = train_test_split(
+            part_ids,
+            train_size=(train_size + val_size),
+            stratify=self.metadata["part_id_label"][part_ids],
+            random_state=self.random_seed,
+        )
+        self.train_part_ids, self.val_part_ids = train_test_split(
+            train_val_part_ids,
+            train_size=(train_size / (train_size + val_size)),
+            stratify=self.metadata["part_id_label"][train_val_part_ids],
+            random_state=self.random_seed,
+        )
+        self._update_sample_ids()
 
     def generate_datasets_by_train_filter(
         self,
@@ -296,21 +326,7 @@ class BoschCNCDataloader:
             raise ValueError("A minimum of one train filter criterium has to be given.")
 
         # Filter general dataset with global filters
-        global_mask = np.ones_like(self.metadata["part_id_label"]).astype(np.bool)
-        if periods is not None:
-            for period_id, period in enumerate(self.periods):
-                if period not in periods:
-                    global_mask[self.metadata["part_id_period"] == period_id] = False
-
-        if processes is not None:
-            for op_id, op in enumerate(self.processes):
-                if op not in processes:
-                    global_mask[self.metadata["part_id_process"] == op_id] = False
-
-        if machines is not None:
-            for machine_id, machine in enumerate(self.machines):
-                if machine not in machines:
-                    global_mask[self.metadata["part_id_machine"] == machine_id] = False
+        global_mask = self._generate_mask(periods, machines, processes)
 
         # Filter training set with training filters
         train_mask = np.copy(global_mask)
@@ -341,31 +357,12 @@ class BoschCNCDataloader:
             np.logical_and(global_mask, np.logical_not(train_mask))
         )[0]
 
-        self.train_sample_ids = []
-        for part_id in self.train_part_ids:
-            self.train_sample_ids.extend(
-                self.metadata["part_id_samples"][part_id][0].tolist()
-            )
-
-        self.test_sample_ids = []
-        for part_id in self.test_part_ids:
-            self.test_sample_ids.extend(
-                self.metadata["part_id_samples"][part_id][0].tolist()
-            )
-
-        self.val_sample_ids = []
-        for part_id in self.val_part_ids:
-            self.val_sample_ids.extend(
-                self.metadata["part_id_samples"][part_id][0].tolist()
-            )
+        self._update_sample_ids()
 
 
 class SimpleTSFreshBoschCNCDataloader(BoschCNCDataloader):
     def __init__(
-        self,
-        metadata_path,
-        window_length=4096,
-        random_seed=42,
+        self, metadata_path, window_length=4096, random_seed=42,
     ):
         super().__init__(
             window_length=window_length,
@@ -381,10 +378,7 @@ class SimpleTSFreshBoschCNCDataloader(BoschCNCDataloader):
 
 class STFTBoschCNCDataloader(BoschCNCDataloader):
     def __init__(
-        self,
-        metadata_path,
-        window_length=4096,
-        random_seed=42,
+        self, metadata_path, window_length=4096, random_seed=42,
     ):
         super().__init__(
             window_length=window_length,
@@ -401,10 +395,7 @@ class STFTBoschCNCDataloader(BoschCNCDataloader):
 
 class NPYBoschCNCDataLoader(BoschCNCDataloader):
     def __init__(
-        self,
-        metadata_path,
-        window_length=4096,
-        random_seed=42,
+        self, metadata_path, window_length=4096, random_seed=42,
     ):
         super().__init__(
             window_length=window_length,
@@ -414,9 +405,7 @@ class NPYBoschCNCDataLoader(BoschCNCDataloader):
         self.load_metadata()
 
     def load_data(
-        self,
-        sample_data_x_path,
-        sample_data_y_path,
+        self, sample_data_x_path, sample_data_y_path,
     ):
         self.sample_data_X = np.load(sample_data_x_path)
         self.sample_data_y = np.load(sample_data_y_path)
@@ -424,10 +413,7 @@ class NPYBoschCNCDataLoader(BoschCNCDataloader):
 
 class RawBoschCNCDataloader(BoschCNCDataloader):
     def __init__(
-        self,
-        metadata_path,
-        window_length=4096,
-        random_seed=42,
+        self, metadata_path, window_length=4096, random_seed=42,
     ):
         super().__init__(
             window_length=window_length,
@@ -468,8 +454,7 @@ class RawBoschCNCDataloader(BoschCNCDataloader):
         hf.close()
 
     def save_windowed_samples_as_npy(
-        self,
-        sample_data_folder_path,
+        self, sample_data_folder_path,
     ):
         np.save(
             os.path.join(
@@ -487,13 +472,11 @@ class RawBoschCNCDataloader(BoschCNCDataloader):
         )
 
     def save_metadata_to_file(
-        self,
-        metadata_folder_path,
+        self, metadata_folder_path,
     ):
         with open(
             os.path.join(
-                metadata_folder_path,
-                "metadata_ws" + str(self.window_length) + ".pkl",
+                metadata_folder_path, "metadata_ws" + str(self.window_length) + ".pkl",
             ),
             "wb",
         ) as f:
