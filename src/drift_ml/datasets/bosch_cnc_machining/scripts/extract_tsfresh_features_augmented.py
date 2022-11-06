@@ -27,9 +27,9 @@ if __name__ == "__main__":
 
     target_path = "/home/tbiegel/nico_files/drift_ml/src/drift_ml/datasets/bosch_cnc_machining/raw_data/augmented"
 
-    min_degrees = 1.0
-    max_degrees = 20.0
-    step_degrees = 2.0
+    min_degrees = 5.0
+    max_degrees = 60.0
+    step_degrees = 5.0
 
     for shift_degrees in np.arange(min_degrees, max_degrees, step_degrees):
         print(f"Processing features for a shift of {shift_degrees}...")
