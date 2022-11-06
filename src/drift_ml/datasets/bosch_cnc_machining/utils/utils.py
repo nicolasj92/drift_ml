@@ -8,7 +8,7 @@ def augment_xyz_samples(data, yaw_deg=0.0, pitch_deg=0.0, roll_deg=0.0):
     rot_matrix = Rotation.from_euler(
         "zyx", [yaw_deg, pitch_deg, roll_deg], degrees=True
     ).as_matrix()
-    augmented_data = np.einsum("ii,jki->jki", rot_matrix, data)
+    augmented_data = np.dot(data, rot_matrix.T)
     return augmented_data
 
 
