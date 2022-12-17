@@ -390,7 +390,7 @@ class STFTBoschCNCDataloader(BoschCNCDataloader):
     def load_data(self, data_h5_path):
         with h5py.File(data_h5_path, "r") as f:
             self.sample_data_X = f["stft"][:]
-            self.sample_data_y = f["data_y"][:]
+            self.sample_data_y = f["sample_data_y"][:]
 
 
 class NPYBoschCNCDataLoader(BoschCNCDataloader):
@@ -437,18 +437,20 @@ class RawBoschCNCDataloader(BoschCNCDataloader):
         for inds in self.metadata["part_id_samples"]:
             min_max_list.append([inds[0].min(), inds[0].max() + 1])
 
-        min_max = np.array(min_max_list)
+        # min_max = np.array(min_max_list)
 
         hf = h5py.File(filename, "w")
-        hf.create_dataset("sample_data_y", data=self.sample_data_y)
-        hf.create_dataset("part_id_machine", data=self.metadata["part_id_machine"])
-        hf.create_dataset("part_id_process", data=self.metadata["part_id_process"])
-        hf.create_dataset("part_id_period", data=self.metadata["part_id_period"])
-        hf.create_dataset("part_id", data=self.metadata["part_id"].astype(np.int32))
-        hf.create_dataset("part_id_samples", data=min_max)
-        hf.create_dataset("part_id_label", data=self.metadata["part_id_label"])
+        # hf.create_dataset("sample_data_y", data=self.sample_data_y)
+        # hf.create_dataset("part_id_machine", data=self.metadata["part_id_machine"])
+        # hf.create_dataset("part_id_process", data=self.metadata["part_id_process"])
+        # hf.create_dataset("part_id_period", data=self.metadata["part_id_period"])
+        # hf.create_dataset("part_id", data=self.metadata["part_id"].astype(np.int32))
+        # hf.create_dataset("part_id_samples", data=min_max)
+        # hf.create_dataset("part_id_label", data=self.metadata["part_id_label"])
         dataset = hf.create_dataset("stft", (self.sample_data_X.shape[0], 3, 129, 33))
         for i in tqdm(range(self.sample_data_X.shape[0])):
+            stft_output = preprocess(self.sample_data_X[i])
+            print(stft_output.shape)
             dataset[i] = preprocess(self.sample_data_X[i])
 
         hf.close()
