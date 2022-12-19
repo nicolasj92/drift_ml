@@ -35,10 +35,10 @@ class LeNet(nn.Module):
         y = self.fc2(y)
         y = self.relu4(y)
         y = self.fc3(y)
-        y = self.relu5(y)
+        # y = self.relu5(y)
         return y
 
     def predict_proba(self, x, temperature=1.0):
         y = torch.div(self.forward(x), temperature)
-        y = torch.sigmoid(y)
+        y = torch.sigmoid(y).detach()
         return y
