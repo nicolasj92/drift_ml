@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.signal import stft
+from tqdm.contrib.concurrent import process_map
 from sklearn.model_selection import train_test_split
 import pickle as pkl
 
@@ -98,6 +99,44 @@ class BoschCNCDataloader:
             "part_id_path": np.array([]),
             "part_id_samples": [],
         }
+
+    @staticmethod
+    def _sample_stft(sample, fs=2000):
+        specs = []
+        for c in range(sample.shape[1]):
+            _, _, Zxx = stft(sample[:, c], fs=fs)
+            specs.append(np.abs(Zxx))
+        specs = np.stack(specs, axis=0)
+        return specs
+
+    def get_windowed_samples_as_stft_dataloader(self, transform_fn=(lambda x: x)):
+        stft = np.zeros((self.sample_data_X.shape[0], 3, 129, 33))
+        # for i in tqdm(range(self.sample_data_X.shape[0])):
+        #     stft[i] = BoschCNCDataloader._sample_stft(self.sample_data_X[i])
+        stft = np.array(
+            process_map(
+                BoschCNCDataloader._sample_stft,
+                transform_fn(self.sample_data_X),
+                chunksize=10,
+                max_workers=12,
+            )
+        )
+
+        stft_dataloader = STFTBoschCNCDataloader(
+            metadata_path=self.metadata_path,
+            window_length=self.window_length,
+            random_seed=self.random_seed,
+        )
+        stft_dataloader.sample_data_X = stft
+        stft_dataloader.sample_data_y = self.sample_data_y
+        return stft_dataloader
+
+    def save_windowed_samples_as_stft(self, filename="cnc_dataset_stft_data.h5"):
+        hf = h5py.File(filename, "w")
+        dataset = hf.create_dataset("stft", (self.sample_data_X.shape[0], 3, 129, 33))
+        for i in tqdm(range(self.sample_data_X.shape[0])):
+            dataset[i] = BoschCNCDataloader._sample_stft(self.sample_data_X[i])
+        hf.close()
 
     def load_metadata(self,):
         with open(self.metadata_path, "rb") as f:
@@ -390,7 +429,7 @@ class STFTBoschCNCDataloader(BoschCNCDataloader):
     def load_data(self, data_h5_path):
         with h5py.File(data_h5_path, "r") as f:
             self.sample_data_X = f["stft"][:]
-            self.sample_data_y = f["data_y"][:]
+            self.sample_data_y = f["sample_data_y"][:]
 
 
 class NPYBoschCNCDataLoader(BoschCNCDataloader):
@@ -423,35 +462,6 @@ class RawBoschCNCDataloader(BoschCNCDataloader):
 
         self.sample_data_X = np.empty((0, self.window_length, 3), float)
         self.sample_data_y = np.empty((0), bool)
-
-    def save_windowed_samples_as_stft(self, filename="cnc_dataset_stft_data.h5"):
-        def preprocess(sample, fs=2000):
-            specs = []
-            for c in range(sample.shape[1]):
-                _, _, Zxx = stft(sample[:, c], fs=fs)
-                specs.append(np.abs(Zxx))
-            specs = np.stack(specs, axis=0)
-            return specs
-
-        min_max_list = []
-        for inds in self.metadata["part_id_samples"]:
-            min_max_list.append([inds[0].min(), inds[0].max() + 1])
-
-        min_max = np.array(min_max_list)
-
-        hf = h5py.File(filename, "w")
-        hf.create_dataset("sample_data_y", data=self.sample_data_y)
-        hf.create_dataset("part_id_machine", data=self.metadata["part_id_machine"])
-        hf.create_dataset("part_id_process", data=self.metadata["part_id_process"])
-        hf.create_dataset("part_id_period", data=self.metadata["part_id_period"])
-        hf.create_dataset("part_id", data=self.metadata["part_id"].astype(np.int32))
-        hf.create_dataset("part_id_samples", data=min_max)
-        hf.create_dataset("part_id_label", data=self.metadata["part_id_label"])
-        dataset = hf.create_dataset("stft", (self.sample_data_X.shape[0], 3, 129, 33))
-        for i in tqdm(range(self.sample_data_X.shape[0])):
-            dataset[i] = preprocess(self.sample_data_X[i])
-
-        hf.close()
 
     def save_windowed_samples_as_npy(
         self, sample_data_folder_path,
