@@ -19,7 +19,7 @@ logger.setLevel(logging.DEBUG)
 
 class NNClassifier:
     def __init__(self, model=LeNet):
-        self.model = model
+        self.model = model()
 
     def predict_proba(self, X, temperature):
         return self.model.predict_proba(X, temperature=temperature)
