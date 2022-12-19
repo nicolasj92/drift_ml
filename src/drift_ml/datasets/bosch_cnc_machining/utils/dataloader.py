@@ -100,6 +100,30 @@ class BoschCNCDataloader:
             "part_id_samples": [],
         }
 
+    @property
+    def X_train(self):
+        return self.sample_data_X[self.train_sample_ids]
+
+    @property
+    def y_train(self):
+        return self.sample_data_y[self.train_sample_ids]
+
+    @property
+    def X_val(self):
+        return self.sample_data_X[self.val_sample_ids]
+
+    @property
+    def y_val(self):
+        return self.sample_data_y[self.val_sample_ids]
+
+    @property
+    def X_test(self):
+        return self.sample_data_X[self.test_sample_ids]
+
+    @property
+    def y_test(self):
+        return self.sample_data_y[self.test_sample_ids]
+
     @staticmethod
     def _sample_stft(sample, fs=2000):
         specs = []
