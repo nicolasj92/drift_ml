@@ -38,7 +38,7 @@ class LeNet(nn.Module):
         # y = self.relu5(y)
         return y
 
-    def predict_proba(self, x, temperature=1.0):
+    def predict_proba(self, x, temperature):
         y = torch.div(self.forward(x), temperature)
         y = torch.sigmoid(y).detach()
         return y

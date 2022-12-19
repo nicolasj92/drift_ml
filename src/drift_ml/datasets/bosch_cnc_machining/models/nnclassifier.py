@@ -37,11 +37,13 @@ logger.setLevel(logging.DEBUG)
 
 
 class NNClassifier:
-    def __init__(self, model=LeNet):
+    def __init__(self, model=LeNet, device="cuda"):
         self.model = model()
+        self.device = device
+        self.model.to(self.device)
 
     def predict(self, X, threshold=0.5, return_scores=False):
-        y_probs = self.predict_proba(X)
+        y_probs = self.predict_proba(X).cpu()
         y = np.zeros_like(y_probs)
         y[y_probs > threshold] = 1
         if return_scores:
@@ -51,8 +53,8 @@ class NNClassifier:
 
     def predict_proba(self, X, temperature=1.0):
         return self.model.predict_proba(
-            tensor(X).float(), temperature=temperature
-        ).detach()
+            tensor(X).to(self.device).float(), temperature=tensor(temperature).to(self.device)
+        ).cpu()
 
     def fit(
         self,
@@ -88,7 +90,7 @@ class NNClassifier:
             train_set, sampler=train_sampler, batch_size=batch_size
         )
 
-        val_X = tensor(val_X)
+        val_X = tensor(val_X).to(self.device)
         val_y = tensor(val_y)
 
         auroc = BinaryAUROC()
@@ -104,23 +106,22 @@ class NNClassifier:
                 self.model.train()
 
                 for idx, (X, y) in enumerate(train_loader):
+                    X, y = X.to(self.device), y.to(self.device)
                     sgd.zero_grad()
                     predict_y = self.model(X.float())
 
                     loss = loss_fn(predict_y, y.float())
 
                     if idx % 10 == 0:
-                        logging.debug(f"Idx: {idx}, loss: {loss.sum().item():.4f}")
-
-                    pbar.set_description(
-                        f"Epoch {epoch}, Loss {loss:.2f} Val. AUROC {auroc_score:.2f}, AURPC {auprc_score:.2f}, F1 {f1_score:.2f}"
-                    )
+                        pbar.set_description(
+                            f"Epoch {epoch}, Loss {loss:.5f} Val. AUROC {auroc_score:.2f}, AURPC {auprc_score:.2f}, F1 {f1_score:.2f}"
+                        )
 
                     loss.backward()
                     sgd.step()
 
                 self.model.eval()
-                predict_probs = self.model.predict_proba(val_X.float()).detach()
+                predict_probs = self.predict_proba(val_X.float()).detach()
                 auroc_score = auroc(predict_probs, val_y.float())
                 auprc_score = auprc(predict_probs, val_y.float())
                 f1_score = f1(predict_probs, val_y.float())
