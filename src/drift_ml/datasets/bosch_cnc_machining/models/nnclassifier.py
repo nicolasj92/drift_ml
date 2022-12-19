@@ -11,6 +11,25 @@ from torchmetrics.classification import (
 import numpy as np
 import logging
 
+
+def in_notebook():
+    try:
+        from IPython import get_ipython
+
+        if "IPKernelApp" not in get_ipython().config:  # pragma: no cover
+            return False
+    except ImportError:
+        return False
+    except AttributeError:
+        return False
+    return True
+
+
+if in_notebook():
+    from tqdm.notebook import tqdm
+else:
+    from tqdm import tqdm
+
 from drift_ml.datasets.bosch_cnc_machining.models.lenet import LeNet
 
 logger = logging.getLogger()
@@ -21,8 +40,19 @@ class NNClassifier:
     def __init__(self, model=LeNet):
         self.model = model()
 
-    def predict_proba(self, X, temperature):
-        return self.model.predict_proba(X, temperature=temperature)
+    def predict(self, X, threshold=0.5, return_scores=False):
+        y_probs = self.predict_proba(X)
+        y = np.zeros_like(y_probs)
+        y[y_probs > threshold] = 1
+        if return_scores:
+            return y, y_probs
+        else:
+            return y
+
+    def predict_proba(self, X, temperature=1.0):
+        return self.model.predict_proba(
+            tensor(X).float(), temperature=temperature
+        ).detach()
 
     def fit(
         self,
@@ -34,12 +64,10 @@ class NNClassifier:
         lrate=1e-3,
         epochs=100,
         class_weighted_sampling=True,
-        verbose=True,
     ):
-        if verbose:
-            logging.debug(
-                f"Starting training with batch size {batch_size}, lrate {lrate}, epochs {epochs}"
-            )
+        logging.debug(
+            f"Starting training with batch size {batch_size}, lrate {lrate}, epochs {epochs}"
+        )
         sgd = SGD(self.model.parameters(), lr=lrate)
         loss_fn = BCEWithLogitsLoss()
 
@@ -67,30 +95,36 @@ class NNClassifier:
         auprc = BinaryAveragePrecision()
         f1 = BinaryF1Score(threshold=0.5)
 
-        for epoch in range(epochs):
-            self.model.train()
+        auroc_score = np.nan
+        auprc_score = np.nan
+        f1_score = np.nan
 
-            for idx, (X, y) in enumerate(train_loader):
-                sgd.zero_grad()
-                predict_y = self.model(X.float())
-                loss = loss_fn(predict_y, y.float())
+        with tqdm(total=epochs, desc="Training NN") as pbar:
+            for epoch in range(epochs):
+                self.model.train()
 
-                # if idx % 10 == 0:
-                #     logging.debug(f"Idx: {idx}, loss: {loss.sum().item():.4f}")
+                for idx, (X, y) in enumerate(train_loader):
+                    sgd.zero_grad()
+                    predict_y = self.model(X.float())
 
-                loss.backward()
-                sgd.step()
+                    loss = loss_fn(predict_y, y.float())
 
-            self.model.eval()
-            predict_probs = self.model.predict_proba(val_X.float()).detach()
+                    if idx % 10 == 0:
+                        logging.debug(f"Idx: {idx}, loss: {loss.sum().item():.4f}")
 
-            auroc_score = auroc(predict_probs, val_y.float())
-            auprc_score = auprc(predict_probs, val_y.float())
-            f1_score = f1(predict_probs, val_y.float())
-            if verbose:
-                logging.debug(
-                    f"Epoch {epoch}, Val. AUROC {auroc_score:.2f}, AURPC {auprc_score:.2f}, F1 {f1_score:.2f}"
-                )
+                    pbar.set_description(
+                        f"Epoch {epoch}, Loss {loss:.2f} Val. AUROC {auroc_score:.2f}, AURPC {auprc_score:.2f}, F1 {f1_score:.2f}"
+                    )
+
+                    loss.backward()
+                    sgd.step()
+
+                self.model.eval()
+                predict_probs = self.model.predict_proba(val_X.float()).detach()
+                auroc_score = auroc(predict_probs, val_y.float())
+                auprc_score = auprc(predict_probs, val_y.float())
+                f1_score = f1(predict_probs, val_y.float())
+                pbar.update(1)
 
         logging.debug(
             f"Final val. performance: AUROC {auroc_score:.2f}, AURPC {auprc_score:.2f}, F1 {f1_score:.2f}"

@@ -133,7 +133,9 @@ class BoschCNCDataloader:
         specs = np.stack(specs, axis=0)
         return specs
 
-    def get_windowed_samples_as_stft_dataloader(self, transform_fn=(lambda x: x)):
+    def get_windowed_samples_as_stft_dataloader(
+        self, transform_fn=(lambda x: x), copy_sets=True
+    ):
         stft = np.zeros((self.sample_data_X.shape[0], 3, 129, 33))
         # for i in tqdm(range(self.sample_data_X.shape[0])):
         #     stft[i] = BoschCNCDataloader._sample_stft(self.sample_data_X[i])
@@ -153,6 +155,15 @@ class BoschCNCDataloader:
         )
         stft_dataloader.sample_data_X = stft
         stft_dataloader.sample_data_y = self.sample_data_y
+
+        if copy_sets:
+            stft_dataloader.train_part_ids = self.train_part_ids
+            stft_dataloader.val_part_ids = self.val_part_ids
+            stft_dataloader.test_part_ids = self.test_part_ids
+            stft_dataloader.train_sample_ids = self.train_sample_ids
+            stft_dataloader.val_sample_ids = self.val_sample_ids
+            stft_dataloader.test_sample_ids = self.test_sample_ids
+
         return stft_dataloader
 
     def save_windowed_samples_as_stft(self, filename="cnc_dataset_stft_data.h5"):
