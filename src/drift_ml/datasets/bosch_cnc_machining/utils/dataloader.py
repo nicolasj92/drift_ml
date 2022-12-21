@@ -97,7 +97,7 @@ class BoschCNCDataloader:
 
     @property
     def y_test(self):
-        return self.sample_data_y[self.test_sample_ids]
+        return self.sample_data_y[self.test_sample_ids]      
 
     @staticmethod
     def _sample_stft(sample, fs=2000):
@@ -441,6 +441,13 @@ class STFTBoschCNCDataloader(BoschCNCDataloader):
             self.sample_data_X = f["stft"][:]
             self.sample_data_y = f["sample_data_y"][:]
 
+    def standardize_datasets(self, datasets):
+        channel_means = np.mean(self.X_train, axis=(0, 2, 3), keepdims=True)
+        channel_stds = np.std(self.X_train, axis=(0, 2, 3), keepdims=True)
+        return [(dataset - channel_means)/ channel_stds for dataset in datasets]
+
+    def get_standardized_train_val_test(self):
+        return self.standardize_datasets([self.X_train, self.X_val, self.X_test])
 
 class NPYBoschCNCDataLoader(BoschCNCDataloader):
     def __init__(

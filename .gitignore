@@ -1,2 +1,3 @@
 *.pyc
+*.pkl
 src/drift_ml.egg-info/*
