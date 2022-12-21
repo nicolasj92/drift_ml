@@ -8,29 +8,19 @@ from torchmetrics.classification import (
     BinaryF1Score,
     BinaryAveragePrecision,
 )
+
+import functools
 import numpy as np
-import logging
 
-
-def in_notebook():
-    try:
-        from IPython import get_ipython
-
-        if "IPKernelApp" not in get_ipython().config:  # pragma: no cover
-            return False
-    except ImportError:
-        return False
-    except AttributeError:
-        return False
-    return True
-
+from drift_ml.utils.utils import in_notebook
+from drift_ml.datasets.bosch_cnc_machining.models.lenet import LeNet
 
 if in_notebook():
     from tqdm.notebook import tqdm
 else:
     from tqdm import tqdm
 
-from drift_ml.datasets.bosch_cnc_machining.models.lenet import LeNet
+import logging
 
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
@@ -42,8 +32,8 @@ class NNClassifier:
         self.device = device
         self.model.to(self.device)
 
-    def predict(self, X, threshold=0.5, return_scores=False):
-        y_probs = self.predict_proba(X).cpu()
+    def predict(self, X, threshold=0.5, temperature=1.0, return_scores=False):
+        y_probs = self.predict_proba(X, temperature=temperature)
         y = np.zeros_like(y_probs)
         y[y_probs > threshold] = 1
         if return_scores:
@@ -52,9 +42,15 @@ class NNClassifier:
             return y
 
     def predict_proba(self, X, temperature=1.0):
-        return self.model.predict_proba(
-            tensor(X).to(self.device).float(), temperature=tensor(temperature).to(self.device)
-        ).cpu()
+        return (
+            self.model.predict_proba(
+                tensor(X).to(self.device).float(),
+                temperature=tensor(temperature).to(self.device),
+            )
+            .detach()
+            .cpu()
+            .numpy()
+        )
 
     def fit(
         self,
@@ -66,10 +62,14 @@ class NNClassifier:
         lrate=1e-3,
         epochs=100,
         class_weighted_sampling=True,
+        verbose=False,
+        show_final_val_performance=True,
+        return_self=True,
     ):
-        logging.debug(
-            f"Starting training with batch size {batch_size}, lrate {lrate}, epochs {epochs}"
-        )
+        if verbose:
+            logging.debug(
+                f"Starting training with batch size {batch_size}, lrate {lrate}, epochs {epochs}"
+            )
         sgd = SGD(self.model.parameters(), lr=lrate)
         loss_fn = BCEWithLogitsLoss()
 
@@ -101,43 +101,75 @@ class NNClassifier:
         auprc_score = np.nan
         f1_score = np.nan
 
-        with tqdm(total=epochs, desc="Training NN") as pbar:
-            for epoch in range(epochs):
-                self.model.train()
+        if verbose:
+            pbar = tqdm(total=epochs, desc="Training NN")
+        for epoch in range(epochs):
+            self.model.train()
 
-                for idx, (X, y) in enumerate(train_loader):
-                    X, y = X.to(self.device), y.to(self.device)
-                    sgd.zero_grad()
-                    predict_y = self.model(X.float())
+            for idx, (X, y) in enumerate(train_loader):
+                X, y = X.to(self.device), y.to(self.device)
+                sgd.zero_grad()
+                predict_y = self.model(X.float())
 
-                    loss = loss_fn(predict_y, y.float())
+                loss = loss_fn(predict_y, y.float())
 
-                    if idx % 10 == 0:
-                        pbar.set_description(
-                            f"Epoch {epoch}, Loss {loss:.5f} Val. AUROC {auroc_score:.2f}, AURPC {auprc_score:.2f}, F1 {f1_score:.2f}"
-                        )
+                if verbose and idx % 10 == 0:
+                    pbar.set_description(
+                        f"Epoch {epoch}, Loss {loss:.5f} Val. AUROC {auroc_score:.2f}, AURPC {auprc_score:.2f}, F1 {f1_score:.2f}"
+                    )
 
-                    loss.backward()
-                    sgd.step()
+                loss.backward()
+                sgd.step()
 
-                self.model.eval()
-                predict_probs = self.predict_proba(val_X.float()).detach()
-                auroc_score = auroc(predict_probs, val_y.float())
-                auprc_score = auprc(predict_probs, val_y.float())
-                f1_score = f1(predict_probs, val_y.float())
+            self.model.eval()
+            predict_probs = tensor(self.predict_proba(val_X.float()))
+            auroc_score = auroc(predict_probs, val_y.float())
+            auprc_score = auprc(predict_probs, val_y.float())
+            f1_score = f1(predict_probs, val_y.float())
+
+            if verbose:
                 pbar.update(1)
 
-        logging.debug(
-            f"Final val. performance: AUROC {auroc_score:.2f}, AURPC {auprc_score:.2f}, F1 {f1_score:.2f}"
-        )
+        if verbose or show_final_val_performance:
+            logging.debug(
+                f"Final val. performance: AUROC {auroc_score:.2f}, AURPC {auprc_score:.2f}, F1 {f1_score:.2f}"
+            )
+
+        if return_self:
+            return self
+
+
+def call_fit_helper(model, args, kwargs):
+    return model.fit(*args, **kwargs)
 
 
 class NNEnsembleClassifier:
-    def __init__(self, base_model=NNClassifier, n_ensemble=10, base_model_params={}):
-        self.models = [base_model(**base_model_params) for _ in n_ensemble]
+    def __init__(
+        self, base_model=NNClassifier, n_ensemble=5, workers=2, base_model_params={}
+    ):
+        self.workers = workers
+        self.models = [base_model(**base_model_params) for _ in range(n_ensemble)]
 
-    def fit(self):
-        pass
+    def fit(self, fit_args, fit_kwargs):
+        mp = torch.multiprocessing.get_context("spawn")
+        pool = mp.Pool(self.workers)
 
-    def predict_proba(self):
-        pass
+        partial_fit = functools.partial(
+            call_fit_helper, args=fit_args, kwargs=fit_kwargs
+        )
+        self.models = pool.map(partial_fit, self.models)
+
+    def predict_proba(self, X, temperature=1.0):
+        predictions = np.array(
+            [model.predict_proba(X, temperature=temperature) for model in self.models]
+        )
+        return np.mean(predictions, axis=0)
+
+    def predict(self, X, threshold=0.5, temperature=1.0, return_scores=False):
+        y_probs = self.predict_proba(X, temperature=temperature)
+        y = np.zeros_like(y_probs)
+        y[y_probs > threshold] = 1
+        if return_scores:
+            return y, y_probs
+        else:
+            return y
