@@ -20,7 +20,7 @@ else:
 
 class BoschCNCDataloader:
     def __init__(
-        self, metadata_path, window_length=4096, random_seed=42,
+        self, metadata_path="", window_length=4096, random_seed=42,
     ):
         self.random_seed = random_seed
         self.metadata_path = metadata_path
@@ -462,12 +462,10 @@ class NPYBoschCNCDataLoader(BoschCNCDataloader):
 
 class RawBoschCNCDataloader(BoschCNCDataloader):
     def __init__(
-        self, metadata_path, window_length=4096, random_seed=42,
+        self, window_length=4096, random_seed=42,
     ):
         super().__init__(
-            window_length=window_length,
-            metadata_path=metadata_path,
-            random_seed=random_seed,
+            window_length=window_length, random_seed=random_seed,
         )
 
         self.sample_data_X = np.empty((0, self.window_length, 3), float)
@@ -492,15 +490,11 @@ class RawBoschCNCDataloader(BoschCNCDataloader):
         )
 
     def save_metadata_to_file(
-        self, metadata_folder_path,
+        self, metadata_path,
     ):
-        with open(
-            os.path.join(
-                metadata_folder_path, "metadata_ws" + str(self.window_length) + ".pkl",
-            ),
-            "wb",
-        ) as f:
+        with open(os.path.join(metadata_path,), "wb",) as f:
             pkl.dump(self.metadata, f)
+        self.metadata_path = metadata_path
 
     def load_raw_h5_data(self, raw_h5_data_path):
         sample_count = 0
