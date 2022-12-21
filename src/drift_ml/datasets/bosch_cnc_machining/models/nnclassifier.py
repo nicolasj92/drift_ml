@@ -136,6 +136,7 @@ class NNClassifier:
             )
 
         if return_self:
+            self.model.to("cpu")
             return self
 
 
@@ -145,8 +146,13 @@ def call_fit_helper(model, args, kwargs):
 
 class NNEnsembleClassifier:
     def __init__(
-        self, base_model=NNClassifier, n_ensemble=5, workers=2, base_model_params={}
+        self,
+        base_model=NNClassifier,
+        n_ensemble=5,
+        workers=2,
+        base_model_params={"device": "cuda"},
     ):
+        self.device = base_model_params["device"]
         self.workers = workers
         self.models = [base_model(**base_model_params) for _ in range(n_ensemble)]
 
@@ -158,6 +164,8 @@ class NNEnsembleClassifier:
             call_fit_helper, args=fit_args, kwargs=fit_kwargs
         )
         self.models = pool.map(partial_fit, self.models)
+        for model in self.models:
+            model.model.to(self.device)
 
     def predict_proba(self, X, temperature=1.0):
         predictions = np.array(
