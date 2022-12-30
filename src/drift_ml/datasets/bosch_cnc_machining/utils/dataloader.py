@@ -189,7 +189,7 @@ class DriftDataLoader:
                 print(f"skipping config {i}")
                 continue
             start_index = max(index, drift_config["start"])
-            end_index = min(index + length, drift_config["end"])
+            end_index = min(index + length + 1, drift_config["end"])
             this_config_length = end_index - start_index
 
             print(f"taking {this_config_length} samples from config {i}")
