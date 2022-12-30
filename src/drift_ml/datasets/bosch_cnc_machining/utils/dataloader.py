@@ -18,6 +18,202 @@ else:
     from tqdm import tqdm
 
 
+def sample_stft(sample, fs=2000):
+    specs = []
+    for c in range(sample.shape[1]):
+        _, _, Zxx = stft(sample[:, c], fs=fs)
+        specs.append(np.abs(Zxx))
+    specs = np.stack(specs, axis=0)
+    return specs
+
+
+example_sudden_config = {
+    "base_config": {
+        "train_size": 0.3,
+        "val_size": 0.2,
+        "test_size": 0.5,
+        "machines": None,
+        "processes": None,
+        "periods": None,
+    },
+    "drift_config": [
+        {
+            "start": 0,
+            "end": 1000,
+            "type": "constant",
+            "only_test": False,
+            "machines": None,
+            "processes": None,
+            "periods": None,
+            "transform_fn": None,
+        },
+        {
+            "start": 1000,
+            "end": 2000,
+            "type": "constant",
+            "only_test": False,
+            "machines": None,
+            "processes": None,
+            "periods": None,
+            "transform_fn": None,
+        },
+    ],
+}
+
+example_gradual_config = {
+    "base_config": {
+        "train_size": 0.3,
+        "val_size": 0.2,
+        "test_size": 0.5,
+        "machines": None,
+        "processes": None,
+        "periods": None,
+    },
+    "drift_config": [
+        {
+            "start": 0,
+            "end": 1000,
+            "type": "linear",
+            "part_1": {
+                "only_test": False,
+                "machines": None,
+                "processes": None,
+                "periods": None,
+                "transform_fn": None,
+            },
+            "part_2": {
+                "only_test": False,
+                "machines": None,
+                "processes": None,
+                "periods": None,
+                "transform_fn": None,
+            },
+        }
+    ],
+}
+
+
+class DriftDataLoader:
+    def __init__(
+        self, baseloader, config, stft=True, random_seed=42,
+    ):
+        self.random_seed = random_seed
+        self.config = config
+        self.baseloader = baseloader
+        self.stft = stft
+        self._initialize()
+
+    def _get_sample_ids(self, part_ids):
+        sample_ids = []
+        for part_id in part_ids:
+            sample_ids.extend(
+                self.baseloader.metadata["part_id_samples"][part_id][0].tolist()
+            )
+        return sample_ids
+
+    def _initialize(self):
+        self.baseloader.generate_datasets_by_size(
+            train_size=self.config["base_config"]["train_size"],
+            val_size=self.config["base_config"]["val_size"],
+            test_size=self.config["base_config"]["test_size"],
+        )
+
+        self.train_base_config_part_ids = self.baseloader.train_part_ids[
+            self.baseloader._generate_mask(
+                self.config["base_config"]["periods"],
+                self.config["base_config"]["machines"],
+                self.config["base_config"]["processes"],
+                n=len(self.baseloader.train_part_ids),
+            )
+        ]
+        self.train_base_config_sample_ids = self._get_sample_ids(
+            self.train_base_config_part_ids
+        )
+
+        self.val_base_config_part_ids = self.baseloader.val_part_ids[
+            self.baseloader._generate_mask(
+                self.config["base_config"]["periods"],
+                self.config["base_config"]["machines"],
+                self.config["base_config"]["processes"],
+                n=len(self.baseloader.val_part_ids),
+            )
+        ]
+        self.val_base_config_sample_ids = self._get_sample_ids(
+            self.train_base_config_part_ids
+        )
+
+        self.test_base_config_part_ids = self.baseloader.test_part_ids[
+            self.baseloader._generate_mask(
+                self.config["base_config"]["periods"],
+                self.config["base_config"]["machines"],
+                self.config["base_config"]["processes"],
+                n=len(self.baseloader.test_part_ids),
+            )
+        ]
+        self.test_base_config_sample_ids = self._get_sample_ids(
+            self.train_base_config_part_ids
+        )
+
+        for i, drift_config in enumerate(self.config["drift_config"]):
+            if drift_config["type"] == "constant":
+                if drift_config["only_test"]:
+                    self.baseloader.test_part_ids[
+                        self.baseloader._generate_mask(
+                            drift_config["periods"],
+                            drift_config["machines"],
+                            drift_config["processes"],
+                            n=len(self.baseloader.test_part_ids),
+                        )
+                    ]
+                else:
+                    self.config["drift_config"][i]["part_ids"] = np.arange(
+                        self.baseloader.metadata["part_id"].shape[0]
+                    )[
+                        self.baseloader._generate_mask(
+                            drift_config["periods"],
+                            drift_config["machines"],
+                            drift_config["processes"],
+                        )
+                    ]
+
+                self.config["drift_config"][i]["sample_ids"] = self._get_sample_ids(
+                    self.config["drift_config"][i]["part_ids"]
+                )
+            else:
+                raise NotImplementedError
+
+    def access_test_drift_samples(self, index, length=1):
+        return_samples = []
+        for i, drift_config in enumerate(self.config["drift_config"]):
+            if index >= drift_config["end"] or (index + length) < drift_config["start"]:
+                print(f"skipping config {i}")
+                continue
+            start_index = max(index, drift_config["start"])
+            end_index = min(index + length, drift_config["end"])
+            this_config_length = end_index - start_index
+
+            print(f"taking {this_config_length} samples from config {i}")
+
+            sample_ids = np.random.choice(
+                drift_config["sample_ids"], size=this_config_length, replace=True
+            )
+            samples = self.baseloader.sample_data_X[sample_ids]
+            if drift_config["transform_fn"] is not None:
+                samples = drift_config["transform_fn"](samples)
+            return_samples.append(samples)
+
+        return_samples = np.concatenate(return_samples, axis=0)
+
+        if self.stft:
+            return_samples_stft = []
+            for i in range(return_samples.shape[0]):
+                return_samples_stft.append(sample_stft(return_samples[i]))
+
+            return_samples = np.stack(return_samples_stft, axis=0)
+
+        return return_samples
+
+
 class BoschCNCDataloader:
     def __init__(
         self, metadata_path="", window_length=4096, random_seed=42,
@@ -97,26 +293,17 @@ class BoschCNCDataloader:
 
     @property
     def y_test(self):
-        return self.sample_data_y[self.test_sample_ids]      
-
-    @staticmethod
-    def _sample_stft(sample, fs=2000):
-        specs = []
-        for c in range(sample.shape[1]):
-            _, _, Zxx = stft(sample[:, c], fs=fs)
-            specs.append(np.abs(Zxx))
-        specs = np.stack(specs, axis=0)
-        return specs
+        return self.sample_data_y[self.test_sample_ids]
 
     def get_windowed_samples_as_stft_dataloader(
         self, transform_fn=(lambda x: x), copy_sets=True
     ):
         stft = np.zeros((self.sample_data_X.shape[0], 3, 129, 33))
         # for i in tqdm(range(self.sample_data_X.shape[0])):
-        #     stft[i] = BoschCNCDataloader._sample_stft(self.sample_data_X[i])
+        #     stft[i] = BoschCNCDataloader.sample_stft(self.sample_data_X[i])
         stft = np.array(
             process_map(
-                BoschCNCDataloader._sample_stft,
+                sample_stft,
                 transform_fn(self.sample_data_X),
                 chunksize=10,
                 max_workers=12,
@@ -145,7 +332,7 @@ class BoschCNCDataloader:
         hf = h5py.File(filename, "w")
         dataset = hf.create_dataset("stft", (self.sample_data_X.shape[0], 3, 129, 33))
         for i in tqdm(range(self.sample_data_X.shape[0])):
-            dataset[i] = BoschCNCDataloader._sample_stft(self.sample_data_X[i])
+            dataset[i] = sample_stft(self.sample_data_X[i])
         hf.close()
 
     def load_metadata(self,):
@@ -276,9 +463,13 @@ class BoschCNCDataloader:
             sample_ids.extend(self.metadata["part_id_samples"][part_id][0].tolist())
         return sample_ids
 
-    def _generate_mask(self, periods, machines, processes):
+    def _generate_mask(self, periods, machines, processes, n=None):
         # Filter general dataset with global filters
-        mask = np.ones_like(self.metadata["part_id_label"]).astype(np.bool)
+        if n is None:
+            mask = np.ones_like(self.metadata["part_id_label"]).astype(np.bool)
+        else:
+            mask = np.ones((n)).astype(np.bool)
+
         if periods is not None:
             for period_id, period in enumerate(self.periods):
                 if period not in periods:
@@ -444,10 +635,11 @@ class STFTBoschCNCDataloader(BoschCNCDataloader):
     def standardize_datasets(self, datasets):
         channel_means = np.mean(self.X_train, axis=(0, 2, 3), keepdims=True)
         channel_stds = np.std(self.X_train, axis=(0, 2, 3), keepdims=True)
-        return [(dataset - channel_means)/ channel_stds for dataset in datasets]
+        return [(dataset - channel_means) / channel_stds for dataset in datasets]
 
     def get_standardized_train_val_test(self):
         return self.standardize_datasets([self.X_train, self.X_val, self.X_test])
+
 
 class NPYBoschCNCDataLoader(BoschCNCDataloader):
     def __init__(
