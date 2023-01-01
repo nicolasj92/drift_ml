@@ -1,7 +1,17 @@
 import pandas as pd
 import numpy as np
+from scipy.signal import stft
 from scipy.spatial.transform import Rotation
 from tsfresh import extract_features
+
+
+def sample_stft(sample, fs=2000):
+    specs = []
+    for c in range(sample.shape[1]):
+        _, _, Zxx = stft(sample[:, c], fs=fs)
+        specs.append(np.abs(Zxx))
+    specs = np.stack(specs, axis=0)
+    return specs
 
 
 def augment_xyz_samples(data, yaw_deg=0.0, pitch_deg=0.0, roll_deg=0.0):
@@ -24,7 +34,7 @@ def extract_tsfresh_features(samples, featureset):
         pd_X,
         column_id="id",
         column_sort="time",
-        kind_to_fc_parameters=featureset,
+        default_fc_parameters=featureset,
         chunksize=10,
     )
     return extracted_features

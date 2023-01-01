@@ -5,26 +5,21 @@ import h5py
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from scipy.signal import stft
+
 from tqdm.contrib.concurrent import process_map
 from sklearn.model_selection import train_test_split
 import pickle as pkl
 
 from drift_ml.utils.utils import in_notebook, find_all_h5s_in_dir
+from drift_ml.datasets.bosch_cnc_machining.utils.utils import (
+    sample_stft,
+    extract_tsfresh_features,
+)
 
 if in_notebook():
     from tqdm.notebook import tqdm
 else:
     from tqdm import tqdm
-
-
-def sample_stft(sample, fs=2000):
-    specs = []
-    for c in range(sample.shape[1]):
-        _, _, Zxx = stft(sample[:, c], fs=fs)
-        specs.append(np.abs(Zxx))
-    specs = np.stack(specs, axis=0)
-    return specs
 
 
 example_sudden_config = {
@@ -95,12 +90,11 @@ example_gradual_config = {
 
 class DriftDataLoader:
     def __init__(
-        self, baseloader, config, stft=True, random_seed=42,
+        self, baseloader, config, random_seed=42,
     ):
         self.random_seed = random_seed
         self.config = config
         self.baseloader = baseloader
-        self.stft = stft
         self._initialize()
 
     def _get_sample_ids(self, part_ids):
@@ -208,6 +202,20 @@ class DriftDataLoader:
             else:
                 raise NotImplementedError
 
+    def access_test_drift_samples_stft(self, index, length=1):
+        raw_samples = self.access_test_drift_samples(index, length=length)
+        return_samples_stft = []
+        for i in range(raw_samples.shape[0]):
+            return_samples_stft.append(sample_stft(raw_samples[i]))
+
+        return_samples = np.stack(return_samples_stft, axis=0)
+        return return_samples
+
+    def access_test_drift_samples_tsfresh(self, featureset, index, length=1):
+        raw_samples = self.access_test_drift_samples(index, length=length)
+        tsfresh_features = extract_tsfresh_features(raw_samples, featureset)
+        return tsfresh_features
+
     def access_test_drift_samples(self, index, length=1):
         return_samples = []
         for i, drift_config in enumerate(self.config["drift_config"]):
@@ -215,13 +223,12 @@ class DriftDataLoader:
                 print(f"skipping config {i}")
                 continue
             start_index = max(index, drift_config["start"]) - drift_config["start"]
-            end_index = (
-                min(index + length + 1, drift_config["end"]) - drift_config["start"]
-            )
+            end_index = min(index + length, drift_config["end"]) - drift_config["start"]
             this_config_length = end_index - start_index
 
-            print(f"taking {this_config_length} samples from config {i}")
-            print(f"indices {start_index} to {end_index}")
+            print(
+                f"taking {this_config_length} samples from config {i}, indices {start_index} to {end_index}"
+            )
 
             samples = self.baseloader.sample_data_X[
                 drift_config["sample_ids"][start_index:end_index]
@@ -233,26 +240,19 @@ class DriftDataLoader:
                 samples = drift_config["transform_fn"](samples)
 
             elif drift_config["type"] == "linear":
+                sampling_choice = drift_config["sampling_choice"][start_index:end_index]
                 if drift_config["part_1"]["transform_fn"] is not None:
-                    samples[drift_config["sampling_choice"] == 0] = drift_config[
-                        "part_1"
-                    ]["transform_fn"](samples[drift_config["sampling_choice"] == 0])
+                    samples[sampling_choice == 0] = drift_config["part_1"][
+                        "transform_fn"
+                    ](samples[sampling_choice == 0])
                 if drift_config["part_2"]["transform_fn"] is not None:
-                    samples[drift_config["sampling_choice"] == 1] = drift_config[
-                        "part_2"
-                    ]["transform_fn"](samples[drift_config["sampling_choice"] == 1])
+                    samples[sampling_choice == 1] = drift_config["part_2"][
+                        "transform_fn"
+                    ](samples[sampling_choice == 1])
 
             return_samples.append(samples)
 
         return_samples = np.concatenate(return_samples, axis=0)
-
-        if self.stft:
-            return_samples_stft = []
-            for i in range(return_samples.shape[0]):
-                return_samples_stft.append(sample_stft(return_samples[i]))
-
-            return_samples = np.stack(return_samples_stft, axis=0)
-
         return return_samples
 
 
