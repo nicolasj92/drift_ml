@@ -111,6 +111,26 @@ class DriftDataLoader:
             )
         return sample_ids
 
+    def _get_sample_ids_for_config(self, config):
+        if config["only_test"]:
+            part_ids = self.baseloader.test_part_ids[
+                self.baseloader._generate_mask(
+                    config["periods"],
+                    config["machines"],
+                    config["processes"],
+                    n=len(self.baseloader.test_part_ids),
+                )
+            ]
+        else:
+            part_ids = np.arange(self.baseloader.metadata["part_id"].shape[0])[
+                self.baseloader._generate_mask(
+                    config["periods"], config["machines"], config["processes"],
+                )
+            ]
+
+        sample_ids = self._get_sample_ids(part_ids)
+        return sample_ids
+
     def _initialize(self):
         self.baseloader.generate_datasets_by_size(
             train_size=self.config["base_config"]["train_size"],
@@ -155,30 +175,36 @@ class DriftDataLoader:
         )
 
         for i, drift_config in enumerate(self.config["drift_config"]):
-            if drift_config["type"] == "constant":
-                if drift_config["only_test"]:
-                    self.baseloader.test_part_ids[
-                        self.baseloader._generate_mask(
-                            drift_config["periods"],
-                            drift_config["machines"],
-                            drift_config["processes"],
-                            n=len(self.baseloader.test_part_ids),
-                        )
-                    ]
-                else:
-                    self.config["drift_config"][i]["part_ids"] = np.arange(
-                        self.baseloader.metadata["part_id"].shape[0]
-                    )[
-                        self.baseloader._generate_mask(
-                            drift_config["periods"],
-                            drift_config["machines"],
-                            drift_config["processes"],
-                        )
-                    ]
+            config_length = drift_config["end"] - drift_config["start"]
 
-                self.config["drift_config"][i]["sample_ids"] = self._get_sample_ids(
-                    self.config["drift_config"][i]["part_ids"]
+            if drift_config["type"] == "constant":
+                sample_ids = self._get_sample_ids_for_config(drift_config)
+                self.config["drift_config"][i]["sample_ids"] = np.random.choice(
+                    sample_ids, config_length, replace=True
                 )
+
+            elif drift_config["type"] == "linear":
+                sample_ids_part_1 = np.random.choice(
+                    self._get_sample_ids_for_config(drift_config["part_1"]),
+                    config_length,
+                    replace=True,
+                )
+                sample_ids_part_2 = np.random.choice(
+                    self._get_sample_ids_for_config(drift_config["part_2"]),
+                    config_length,
+                    replace=True,
+                )
+                probs = np.linspace(start=0, stop=1, num=config_length)
+                sampling_choice = np.random.binomial(n=config_length, p=probs)
+                sample_indices = np.zeros_like(probs, dtype=np.int32)
+                sample_indices[sampling_choice == 0] = sample_ids_part_1[
+                    sampling_choice == 0
+                ]
+                sample_indices[sampling_choice == 1] = sample_ids_part_2[
+                    sampling_choice == 1
+                ]
+                self.config["drift_config"][i]["sample_ids"] = sample_indices
+                self.config["drift_config"][i]["sampling_choice"] = sampling_choice
             else:
                 raise NotImplementedError
 
@@ -188,18 +214,34 @@ class DriftDataLoader:
             if index >= drift_config["end"] or (index + length) < drift_config["start"]:
                 print(f"skipping config {i}")
                 continue
-            start_index = max(index, drift_config["start"])
-            end_index = min(index + length + 1, drift_config["end"])
+            start_index = max(index, drift_config["start"]) - drift_config["start"]
+            end_index = (
+                min(index + length + 1, drift_config["end"]) - drift_config["start"]
+            )
             this_config_length = end_index - start_index
 
             print(f"taking {this_config_length} samples from config {i}")
+            print(f"indices {start_index} to {end_index}")
 
-            sample_ids = np.random.choice(
-                drift_config["sample_ids"], size=this_config_length, replace=True
-            )
-            samples = self.baseloader.sample_data_X[sample_ids]
-            if drift_config["transform_fn"] is not None:
+            samples = self.baseloader.sample_data_X[
+                drift_config["sample_ids"][start_index:end_index]
+            ]
+            if (
+                drift_config["type"] == "constant"
+                and drift_config["transform_fn"] is not None
+            ):
                 samples = drift_config["transform_fn"](samples)
+
+            elif drift_config["type"] == "linear":
+                if drift_config["part_1"]["transform_fn"] is not None:
+                    samples[drift_config["sampling_choice"] == 0] = drift_config[
+                        "part_1"
+                    ]["transform_fn"](samples[drift_config["sampling_choice"] == 0])
+                if drift_config["part_2"]["transform_fn"] is not None:
+                    samples[drift_config["sampling_choice"] == 1] = drift_config[
+                        "part_2"
+                    ]["transform_fn"](samples[drift_config["sampling_choice"] == 1])
+
             return_samples.append(samples)
 
         return_samples = np.concatenate(return_samples, axis=0)
@@ -212,6 +254,15 @@ class DriftDataLoader:
             return_samples = np.stack(return_samples_stft, axis=0)
 
         return return_samples
+
+
+# def standardize_datasets(self, datasets):
+#     channel_means = np.mean(self.X_train, axis=(0, 2, 3), keepdims=True)
+#     channel_stds = np.std(self.X_train, axis=(0, 2, 3), keepdims=True)
+#     return [(dataset - channel_means) / channel_stds for dataset in datasets]
+
+# def get_standardized_train_val_test(self):
+#     return self.standardize_datasets([self.X_train, self.X_val, self.X_test])
 
 
 class BoschCNCDataloader:
