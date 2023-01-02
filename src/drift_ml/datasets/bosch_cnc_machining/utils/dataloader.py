@@ -137,7 +137,7 @@ class DriftDataLoader:
                 self.config["base_config"]["periods"],
                 self.config["base_config"]["machines"],
                 self.config["base_config"]["processes"],
-                n=len(self.baseloader.train_part_ids),
+                part_ids=self.baseloader.train_part_ids,
             )
         ]
         self.train_base_config_sample_ids = self._get_sample_ids(
@@ -149,7 +149,7 @@ class DriftDataLoader:
                 self.config["base_config"]["periods"],
                 self.config["base_config"]["machines"],
                 self.config["base_config"]["processes"],
-                n=len(self.baseloader.val_part_ids),
+                part_ids=self.baseloader.val_part_ids,
             )
         ]
         self.val_base_config_sample_ids = self._get_sample_ids(
@@ -161,7 +161,7 @@ class DriftDataLoader:
                 self.config["base_config"]["periods"],
                 self.config["base_config"]["machines"],
                 self.config["base_config"]["processes"],
-                n=len(self.baseloader.test_part_ids),
+                part_ids=self.baseloader.test_part_ids,
             )
         ]
         self.test_base_config_sample_ids = self._get_sample_ids(
@@ -202,22 +202,56 @@ class DriftDataLoader:
             else:
                 raise NotImplementedError
 
-    def access_test_drift_samples_stft(self, index, length=1):
-        raw_samples = self.access_test_drift_samples(index, length=length)
+    def access_base_samples_stft(self, dataset="train"):
+        raw_samples, labels = self.access_base_samples(dataset=dataset)
         return_samples_stft = []
         for i in range(raw_samples.shape[0]):
             return_samples_stft.append(sample_stft(raw_samples[i]))
 
         return_samples = np.stack(return_samples_stft, axis=0)
-        return return_samples
+        return return_samples, labels
+
+    def access_base_samples_tsfresh(self, featureset, dataset="train"):
+        raw_samples, labels = self.access_base_samples(dataset=dataset)
+        tsfresh_features = extract_tsfresh_features(raw_samples, featureset)
+        return tsfresh_features, labels
+
+    def access_base_samples(self, dataset="train"):
+        if dataset == "train":
+            raw_samples = self.baseloader.sample_data_X[
+                self.train_base_config_sample_ids
+            ]
+            labels = self.baseloader.sample_data_y[self.train_base_config_sample_ids]
+        elif dataset == "val":
+            raw_samples = self.baseloader.sample_data_X[self.val_base_config_sample_ids]
+            labels = self.baseloader.sample_data_y[self.val_base_config_sample_ids]
+        elif dataset == "test":
+            raw_samples = self.baseloader.sample_data_X[
+                self.test_base_config_sample_ids
+            ]
+            labels = self.baseloader.sample_data_y[self.test_base_config_sample_ids]
+        else:
+            raise ValueError
+
+        return raw_samples, labels
+
+    def access_test_drift_samples_stft(self, index, length=1):
+        raw_samples, labels = self.access_test_drift_samples(index, length=length)
+        return_samples_stft = []
+        for i in range(raw_samples.shape[0]):
+            return_samples_stft.append(sample_stft(raw_samples[i]))
+
+        return_samples = np.stack(return_samples_stft, axis=0)
+        return return_samples, labels
 
     def access_test_drift_samples_tsfresh(self, featureset, index, length=1):
-        raw_samples = self.access_test_drift_samples(index, length=length)
+        raw_samples, labels = self.access_test_drift_samples(index, length=length)
         tsfresh_features = extract_tsfresh_features(raw_samples, featureset)
-        return tsfresh_features
+        return tsfresh_features, labels
 
     def access_test_drift_samples(self, index, length=1):
         return_samples = []
+        return_labels = []
         for i, drift_config in enumerate(self.config["drift_config"]):
             if index >= drift_config["end"] or (index + length) < drift_config["start"]:
                 print(f"skipping config {i}")
@@ -231,6 +265,9 @@ class DriftDataLoader:
             )
 
             samples = self.baseloader.sample_data_X[
+                drift_config["sample_ids"][start_index:end_index]
+            ]
+            labels = self.baseloader.sample_data_y[
                 drift_config["sample_ids"][start_index:end_index]
             ]
             if (
@@ -251,9 +288,11 @@ class DriftDataLoader:
                     ](samples[sampling_choice == 1])
 
             return_samples.append(samples)
+            return_labels.append(labels)
 
         return_samples = np.concatenate(return_samples, axis=0)
-        return return_samples
+        return_labels = np.concatenate(return_labels, axis=0)
+        return return_samples, return_labels
 
 
 # def standardize_datasets(self, datasets):
@@ -514,27 +553,30 @@ class BoschCNCDataloader:
             sample_ids.extend(self.metadata["part_id_samples"][part_id][0].tolist())
         return sample_ids
 
-    def _generate_mask(self, periods, machines, processes, n=None):
+    def _generate_mask(self, periods, machines, processes, part_ids=None):
         # Filter general dataset with global filters
-        if n is None:
+        if part_ids is None:
             mask = np.ones_like(self.metadata["part_id_label"]).astype(np.bool)
+            part_ids = np.ones_like(self.metadata["part_id_label"]).astype(np.bool)
         else:
-            mask = np.ones((n)).astype(np.bool)
+            mask = np.ones_like(part_ids).astype(np.bool)
 
         if periods is not None:
             for period_id, period in enumerate(self.periods):
                 if period not in periods:
-                    mask[self.metadata["part_id_period"] == period_id] = False
+                    mask[self.metadata["part_id_period"][part_ids] == period_id] = False
 
         if processes is not None:
             for op_id, op in enumerate(self.processes):
                 if op not in processes:
-                    mask[self.metadata["part_id_process"] == op_id] = False
+                    mask[self.metadata["part_id_process"][part_ids] == op_id] = False
 
         if machines is not None:
             for machine_id, machine in enumerate(self.machines):
                 if machine not in machines:
-                    mask[self.metadata["part_id_machine"] == machine_id] = False
+                    mask[
+                        self.metadata["part_id_machine"][part_ids] == machine_id
+                    ] = False
 
         return mask
 
