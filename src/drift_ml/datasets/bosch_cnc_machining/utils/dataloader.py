@@ -91,9 +91,11 @@ class DriftDataLoader:
     def __init__(
         self, baseloader, config, random_seed=42,
     ):
+        np.random.seed(seed=random_seed)
         self.random_seed = random_seed
         self.config = config
         self.baseloader = baseloader
+        self.baseloader.random_seed = random_seed
         self._initialize()
 
     def _get_sample_ids(self, part_ids):
