@@ -37,4 +37,4 @@ def extract_tsfresh_features(samples, featureset):
         default_fc_parameters=featureset,
         chunksize=10,
     )
-    return extracted_features
+    return extracted_features.to_numpy()
