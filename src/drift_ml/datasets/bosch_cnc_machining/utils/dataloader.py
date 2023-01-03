@@ -144,17 +144,22 @@ class DriftDataLoader:
             self.train_base_config_part_ids
         )
 
-        self.val_base_config_part_ids = self.baseloader.val_part_ids[
-            self.baseloader._generate_mask(
-                self.config["base_config"]["periods"],
-                self.config["base_config"]["machines"],
-                self.config["base_config"]["processes"],
-                part_ids=self.baseloader.val_part_ids,
+        # Val set is optional so the user can use cross validation if wanted
+        if self.config["base_config"]["val_size"] != 0.0:
+            self.val_base_config_part_ids = self.baseloader.val_part_ids[
+                self.baseloader._generate_mask(
+                    self.config["base_config"]["periods"],
+                    self.config["base_config"]["machines"],
+                    self.config["base_config"]["processes"],
+                    part_ids=self.baseloader.val_part_ids,
+                )
+            ]
+            self.val_base_config_sample_ids = self._get_sample_ids(
+                self.train_base_config_part_ids
             )
-        ]
-        self.val_base_config_sample_ids = self._get_sample_ids(
-            self.train_base_config_part_ids
-        )
+        else:
+            self.val_base_config_part_ids = []
+            self.val_base_config_sample_ids = []
 
         self.test_base_config_part_ids = self.baseloader.test_part_ids[
             self.baseloader._generate_mask(
@@ -609,6 +614,7 @@ class BoschCNCDataloader:
         test_size=0.5,
     ):
         assert np.sum([train_size, val_size, test_size]) == 1.0
+        assert np.all([train_size > 0, test_size > 0])
         mask = self._generate_mask(periods, machines, processes)
 
         part_ids = np.nonzero(mask)[0]
@@ -618,12 +624,19 @@ class BoschCNCDataloader:
             stratify=self.metadata["part_id_label"][part_ids],
             random_state=self.random_seed,
         )
-        self.train_part_ids, self.val_part_ids = train_test_split(
-            train_val_part_ids,
-            train_size=(train_size / (train_size + val_size)),
-            stratify=self.metadata["part_id_label"][train_val_part_ids],
-            random_state=self.random_seed,
-        )
+
+        # Val set is optional so you can use cross validation
+        if val_size == 0.0:
+            self.train_part_ids = train_val_part_ids
+            self.val_part_ids = []
+
+        else:
+            self.train_part_ids, self.val_part_ids = train_test_split(
+                train_val_part_ids,
+                train_size=(train_size / (train_size + val_size)),
+                stratify=self.metadata["part_id_label"][train_val_part_ids],
+                random_state=self.random_seed,
+            )
         self._update_sample_ids()
 
     def generate_datasets_by_train_filter(
