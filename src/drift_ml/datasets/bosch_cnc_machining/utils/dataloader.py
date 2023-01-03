@@ -22,6 +22,8 @@ else:
     from tqdm import tqdm
 
 
+# TODO: Change start/end to length
+# TODO: Assert that no sample requests longer than the defined configs are allowed
 example_sudden_config = {
     "base_config": {
         "train_size": 0.3,
@@ -33,8 +35,7 @@ example_sudden_config = {
     },
     "drift_config": [
         {
-            "start": 0,
-            "end": 1000,
+            "length": 10000,
             "type": "constant",
             "only_test": False,
             "machines": None,
@@ -43,8 +44,7 @@ example_sudden_config = {
             "transform_fn": None,
         },
         {
-            "start": 1000,
-            "end": 2000,
+            "length": 10000,
             "type": "constant",
             "only_test": False,
             "machines": None,
@@ -66,8 +66,7 @@ example_gradual_config = {
     },
     "drift_config": [
         {
-            "start": 0,
-            "end": 1000,
+            "length": 10000,
             "type": "linear",
             "part_1": {
                 "only_test": False,
@@ -174,27 +173,25 @@ class DriftDataLoader:
         )
 
         for i, drift_config in enumerate(self.config["drift_config"]):
-            config_length = drift_config["end"] - drift_config["start"]
-
             if drift_config["type"] == "constant":
                 sample_ids = self._get_sample_ids_for_config(drift_config)
                 self.config["drift_config"][i]["sample_ids"] = np.random.choice(
-                    sample_ids, config_length, replace=True
+                    sample_ids, drift_config["length"], replace=True
                 )
 
             elif drift_config["type"] == "linear":
                 sample_ids_part_1 = np.random.choice(
                     self._get_sample_ids_for_config(drift_config["part_1"]),
-                    config_length,
+                    drift_config["length"],
                     replace=True,
                 )
                 sample_ids_part_2 = np.random.choice(
                     self._get_sample_ids_for_config(drift_config["part_2"]),
-                    config_length,
+                    drift_config["length"],
                     replace=True,
                 )
-                probs = np.linspace(start=0, stop=1, num=config_length)
-                sampling_choice = np.random.binomial(n=config_length, p=probs)
+                probs = np.linspace(start=0, stop=1, num=drift_config["length"])
+                sampling_choice = np.random.binomial(n=drift_config["length"], p=probs)
                 sample_indices = np.zeros_like(probs, dtype=np.int32)
                 sample_indices[sampling_choice == 0] = sample_ids_part_1[
                     sampling_choice == 0
@@ -257,12 +254,20 @@ class DriftDataLoader:
     def access_test_drift_samples(self, index, length=1):
         return_samples = []
         return_labels = []
+
+        last_config_end_index = 0
         for i, drift_config in enumerate(self.config["drift_config"]):
-            if index >= drift_config["end"] or (index + length) < drift_config["start"]:
+            if index >= (last_config_end_index + drift_config["length"]) or (
+                index + length
+            ) < (last_config_end_index):
                 print(f"skipping config {i}")
                 continue
-            start_index = max(index, drift_config["start"]) - drift_config["start"]
-            end_index = min(index + length, drift_config["end"]) - drift_config["start"]
+
+            start_index = max(index, (last_config_end_index)) - (last_config_end_index)
+            end_index = min(
+                index + length, (last_config_end_index + drift_config["length"])
+            ) - (last_config_end_index)
+
             this_config_length = end_index - start_index
 
             print(
@@ -294,6 +299,7 @@ class DriftDataLoader:
 
             return_samples.append(samples)
             return_labels.append(labels)
+            last_config_end_index += drift_config["length"]
 
         return_samples = np.concatenate(return_samples, axis=0)
         return_labels = np.concatenate(return_labels, axis=0)
