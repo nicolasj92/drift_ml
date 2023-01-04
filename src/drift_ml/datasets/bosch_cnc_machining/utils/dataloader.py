@@ -87,6 +87,28 @@ example_gradual_config = {
 }
 
 
+class Standardizer:
+    def __init__(self):
+        self.channel_means = None
+        self.channel_stds = None
+
+    def fit(self, X):
+        if len(X.shape) == 2:
+            self.channel_means = np.mean(X, axis=0, keepdims=True)
+            self.channel_stds = np.std(X, axis=0, keepdims=True)
+        elif len(X.shape) == 4:
+            self.channel_means = np.mean(X, axis=(0, 2, 3), keepdims=True)
+            self.channel_stds = np.std(X, axis=(0, 2, 3), keepdims=True)
+        else:
+            raise ValueError
+
+    def transform(self, X):
+        return (X - self.channel_means) / self.channel_stds
+
+    def fit_transform(self, X):
+        self.fit(X)
+        return self.transform(X)
+
 class DriftDataLoader:
     def __init__(
         self, baseloader, config, random_seed=42,
@@ -306,16 +328,6 @@ class DriftDataLoader:
         return_samples = np.concatenate(return_samples, axis=0)
         return_labels = np.concatenate(return_labels, axis=0)
         return return_samples, return_labels
-
-
-# def standardize_datasets(self, datasets):
-#     channel_means = np.mean(self.X_train, axis=(0, 2, 3), keepdims=True)
-#     channel_stds = np.std(self.X_train, axis=(0, 2, 3), keepdims=True)
-#     return [(dataset - channel_means) / channel_stds for dataset in datasets]
-
-# def get_standardized_train_val_test(self):
-#     return self.standardize_datasets([self.X_train, self.X_val, self.X_test])
-
 
 class BoschCNCDataloader:
     def __init__(
