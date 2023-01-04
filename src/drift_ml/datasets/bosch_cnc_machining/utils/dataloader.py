@@ -112,10 +112,7 @@ class Standardizer:
 
 class DriftDataLoader:
     def __init__(
-        self,
-        baseloader,
-        config,
-        random_seed=42,
+        self, baseloader, config, random_seed=42,
     ):
         np.random.seed(seed=random_seed)
         self.random_seed = random_seed
@@ -145,9 +142,7 @@ class DriftDataLoader:
         else:
             part_ids = np.arange(self.baseloader.metadata["part_id"].shape[0])[
                 self.baseloader._generate_mask(
-                    config["periods"],
-                    config["machines"],
-                    config["processes"],
+                    config["periods"], config["machines"], config["processes"],
                 )
             ]
 
@@ -242,12 +237,7 @@ class DriftDataLoader:
         # return_samples = np.stack(return_samples_stft, axis=0)
 
         return_samples = np.array(
-            process_map(
-                sample_stft,
-                raw_samples,
-                chunksize=10,
-                max_workers=12,
-            )
+            process_map(sample_stft, raw_samples, chunksize=10, max_workers=12,)
         )
         return return_samples, labels
 
@@ -283,12 +273,7 @@ class DriftDataLoader:
         # return_samples = np.stack(return_samples_stft, axis=0)
 
         return_samples = np.array(
-            process_map(
-                sample_stft,
-                raw_samples,
-                chunksize=10,
-                max_workers=12,
-            )
+            process_map(sample_stft, raw_samples, chunksize=10, max_workers=12,)
         )
         return return_samples, labels
 
@@ -307,6 +292,7 @@ class DriftDataLoader:
                 index + length
             ) < (last_config_end_index):
                 print(f"skipping config {i}")
+                last_config_end_index += drift_config["length"]
                 continue
 
             start_index = max(index, (last_config_end_index)) - (last_config_end_index)
@@ -345,19 +331,16 @@ class DriftDataLoader:
 
             return_samples.append(samples)
             return_labels.append(labels)
-            last_config_end_index += drift_config["length"]
 
         return_samples = np.concatenate(return_samples, axis=0)
         return_labels = np.concatenate(return_labels, axis=0)
+        last_config_end_index += drift_config["length"]
         return return_samples, return_labels
 
 
 class BoschCNCDataloader:
     def __init__(
-        self,
-        metadata_path="",
-        window_length=4096,
-        random_seed=42,
+        self, metadata_path="", window_length=4096, random_seed=42,
     ):
         self.random_seed = random_seed
         self.metadata_path = metadata_path
@@ -476,9 +459,7 @@ class BoschCNCDataloader:
             dataset[i] = sample_stft(self.sample_data_X[i])
         hf.close()
 
-    def load_metadata(
-        self,
-    ):
+    def load_metadata(self,):
         with open(self.metadata_path, "rb") as f:
             self.metadata = pkl.load(f)
 
@@ -756,10 +737,7 @@ class BoschCNCDataloader:
 
 class SimpleTSFreshBoschCNCDataloader(BoschCNCDataloader):
     def __init__(
-        self,
-        metadata_path,
-        window_length=4096,
-        random_seed=42,
+        self, metadata_path, window_length=4096, random_seed=42,
     ):
         super().__init__(
             window_length=window_length,
@@ -775,10 +753,7 @@ class SimpleTSFreshBoschCNCDataloader(BoschCNCDataloader):
 
 class STFTBoschCNCDataloader(BoschCNCDataloader):
     def __init__(
-        self,
-        metadata_path,
-        window_length=4096,
-        random_seed=42,
+        self, metadata_path, window_length=4096, random_seed=42,
     ):
         super().__init__(
             window_length=window_length,
@@ -803,10 +778,7 @@ class STFTBoschCNCDataloader(BoschCNCDataloader):
 
 class NPYBoschCNCDataLoader(BoschCNCDataloader):
     def __init__(
-        self,
-        metadata_path,
-        window_length=4096,
-        random_seed=42,
+        self, metadata_path, window_length=4096, random_seed=42,
     ):
         super().__init__(
             window_length=window_length,
@@ -816,9 +788,7 @@ class NPYBoschCNCDataLoader(BoschCNCDataloader):
         self.load_metadata()
 
     def load_data(
-        self,
-        sample_data_x_path,
-        sample_data_y_path,
+        self, sample_data_x_path, sample_data_y_path,
     ):
         self.sample_data_X = np.load(sample_data_x_path)
         self.sample_data_y = np.load(sample_data_y_path)
@@ -826,21 +796,17 @@ class NPYBoschCNCDataLoader(BoschCNCDataloader):
 
 class RawBoschCNCDataloader(BoschCNCDataloader):
     def __init__(
-        self,
-        window_length=4096,
-        random_seed=42,
+        self, window_length=4096, random_seed=42,
     ):
         super().__init__(
-            window_length=window_length,
-            random_seed=random_seed,
+            window_length=window_length, random_seed=random_seed,
         )
 
         self.sample_data_X = np.empty((0, self.window_length, 3), float)
         self.sample_data_y = np.empty((0), bool)
 
     def save_windowed_samples_as_npy(
-        self,
-        sample_data_folder_path,
+        self, sample_data_folder_path,
     ):
         np.save(
             os.path.join(
@@ -858,15 +824,9 @@ class RawBoschCNCDataloader(BoschCNCDataloader):
         )
 
     def save_metadata_to_file(
-        self,
-        metadata_path,
+        self, metadata_path,
     ):
-        with open(
-            os.path.join(
-                metadata_path,
-            ),
-            "wb",
-        ) as f:
+        with open(os.path.join(metadata_path,), "wb",) as f:
             pkl.dump(self.metadata, f)
         self.metadata_path = metadata_path
 
