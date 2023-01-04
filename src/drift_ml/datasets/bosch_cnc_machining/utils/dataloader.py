@@ -329,12 +329,12 @@ class DriftDataLoader:
                         "transform_fn"
                     ](samples[sampling_choice == 1])
 
+            last_config_end_index += drift_config["length"]
             return_samples.append(samples)
             return_labels.append(labels)
 
         return_samples = np.concatenate(return_samples, axis=0)
         return_labels = np.concatenate(return_labels, axis=0)
-        last_config_end_index += drift_config["length"]
         return return_samples, return_labels
 
 
