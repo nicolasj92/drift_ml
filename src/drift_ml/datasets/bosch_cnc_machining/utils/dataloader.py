@@ -136,7 +136,7 @@ class DriftDataLoader:
                     config["periods"],
                     config["machines"],
                     config["processes"],
-                    n=len(self.baseloader.test_part_ids),
+                    self.baseloader.test_part_ids,
                 )
             ]
         else:
