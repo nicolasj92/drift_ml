@@ -32,6 +32,7 @@ class NNClassifier:
         self.device = device
         self.output_extra_dim = output_extra_dim
         self.model.to(self.device)
+        self.logger = logging.getLogger("nnclassifier")
 
     def predict(self, X, threshold=0.5, temperature=1.0, return_scores=False):
         y_probs = self.predict_proba(X, temperature=temperature)
@@ -81,7 +82,7 @@ class NNClassifier:
         return_self=False,
     ):
         if verbose:
-            logging.debug(
+            self.logger.debug(
                 f"Starting training with batch size {batch_size}, lrate {lrate}, epochs {epochs}"
             )
         sgd = SGD(self.model.parameters(), lr=lrate)
@@ -158,7 +159,7 @@ class NNClassifier:
             and val_y is not None
             and (verbose or show_final_val_performance)
         ):
-            logging.debug(
+            self.logger.debug(
                 f"Final val. performance: AUROC {auroc_score:.2f}, AURPC {auprc_score:.2f}, F1 {f1_score:.2f}"
             )
 
@@ -177,13 +178,15 @@ class NNEnsembleClassifier:
         base_model=NNClassifier,
         n_ensemble=5,
         workers=2,
+        output_extra_dim=True,
         base_model_params={"device": "cuda"},
     ):
         self.device = base_model_params["device"]
         self.workers = workers
+        self.output_extra_dim = output_extra_dim
         self.models = [base_model(**base_model_params) for _ in range(n_ensemble)]
 
-    def fit(self, fit_args, fit_kwargs):
+    def fit(self, *fit_args, **fit_kwargs):
         mp = torch.multiprocessing.get_context("spawn")
         pool = mp.Pool(self.workers)
 
@@ -198,12 +201,18 @@ class NNEnsembleClassifier:
         predictions = np.array(
             [model.predict_proba(X, temperature=temperature) for model in self.models]
         )
-        return np.mean(predictions, axis=0)
+        probs = np.mean(predictions, axis=0)
+        return probs
 
     def predict(self, X, threshold=0.5, temperature=1.0, return_scores=False):
         y_probs = self.predict_proba(X, temperature=temperature)
-        y = np.zeros_like(y_probs)
-        y[y_probs > threshold] = 1
+
+        if self.output_extra_dim:
+            y = np.argmax(y_probs, axis=1)
+        else:
+            y = np.zeros_like(y_probs)
+            y[y_probs > threshold] = 1
+
         if return_scores:
             return y, y_probs
         else:

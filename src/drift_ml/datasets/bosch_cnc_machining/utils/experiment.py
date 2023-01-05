@@ -71,9 +71,12 @@ class DriftExperiment:
             "recall": lambda x, y: recall_score(x, y, zero_division=0),
         }
         self.metrics_score = {
-            # "auroc": roc_auc_score,
-            # "ap": average_precision_score,
+            "auroc": roc_auc_score,
+            "ap": average_precision_score,
         }
+
+        self.logger = logging.getLogger("driftexperiment")
+        self.logger.setLevel(logging.INFO)
 
     def _fit_model(self):
         X_train, y_train = self.dataloader.access_base_samples(dataset="train")
@@ -82,8 +85,10 @@ class DriftExperiment:
     def run(self):
         if self.fit_model:
             # Fit model initially on training data
-            logging.info("Doing the initial training of the model.")
+            self.logger.warn("Doing the initial training of the model.")
             self._fit_model()
+
+        self.drift_detector.reset()
 
         # Create arrays to hold history
         self.y_true = np.full((self.length), np.nan)
@@ -141,7 +146,11 @@ class DriftExperiment:
                         self.drift_detector is not None
                         and i_sample % self.drift_detector_update_freq == 0
                     ):
-                        self.drift_detector.update()
+                        self.drift_detector.update(
+                            uncertainty=self.y_pred_entr[i_sample],
+                            error=self.y_pred[i_sample] == self.y_true[i_sample],
+                            features=X_chunk[i_chunk_sample],
+                        )
 
                     # Check for drifts and update metrics
                     if i_sample >= self.window_size:
@@ -174,10 +183,10 @@ class DriftExperiment:
                             drift_detected_indices.append(i_sample)
                             self.drift_detector.reset()
 
-                            logging.info(f"Drift detected at {i_sample}")
+                            self.logger.warn(f"Drift detected at {i_sample}")
 
                             if self.retrain_at_drift:
-                                logging.info(
+                                self.logger.warn(
                                     f"Retraining with new samples {i_sample} - {i_sample+self.retrain_new_samples}"
                                 )
                                 # Get new (future) samples for retraining
