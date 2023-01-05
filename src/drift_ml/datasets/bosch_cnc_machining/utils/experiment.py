@@ -104,16 +104,21 @@ class DriftExperiment:
             name: np.full((self.length), np.nan) for name in self.metrics_score
         }
 
-        drift_detected_indices = []
+        self.drift_detected_indices = []
+
         i_chunk_start = 0
 
         # Iterate through data in chunks
         with tqdm(total=self.length) as pbar:
             while i_chunk_start < self.length:
+                pbar.n = i_chunk_start
+                pbar.refresh()
+
+                chunklength = min(self.chunksize, (self.length - i_chunk_start))
 
                 # Load next chunk of data
                 X_chunk, y_true_chunk = self.dataloader.access_test_drift_samples(
-                    index=i_chunk_start, length=self.chunksize
+                    index=i_chunk_start, length=chunklength
                 )
 
                 # Get model output
@@ -122,23 +127,19 @@ class DriftExperiment:
                 y_pred_entr_chunk = entropy(y_pred_proba_chunk, axis=1)
 
                 # Append model output to history
-                self.y_true[
-                    i_chunk_start : i_chunk_start + self.chunksize
-                ] = y_true_chunk
-                self.y_pred[
-                    i_chunk_start : i_chunk_start + self.chunksize
-                ] = y_pred_chunk
+                self.y_true[i_chunk_start : i_chunk_start + chunklength] = y_true_chunk
+                self.y_pred[i_chunk_start : i_chunk_start + chunklength] = y_pred_chunk
                 self.y_pred_proba[
-                    i_chunk_start : i_chunk_start + self.chunksize
+                    i_chunk_start : i_chunk_start + chunklength
                 ] = y_pred_proba_chunk
                 self.y_pred_entr[
-                    i_chunk_start : i_chunk_start + self.chunksize
+                    i_chunk_start : i_chunk_start + chunklength
                 ] = y_pred_entr_chunk
 
                 has_retrained = False
 
                 # Go through each sample of the chunk and predicitons
-                for i_chunk_sample in range(self.chunksize):
+                for i_chunk_sample in range(chunklength):
                     i_sample = i_chunk_start + i_chunk_sample
                     pbar.update(1)
 
@@ -153,7 +154,18 @@ class DriftExperiment:
                         )
 
                     # Check for drifts and update metrics
-                    if i_sample >= self.window_size:
+                    # if window size is filled
+                    if (
+                        len(self.drift_detected_indices) == 0
+                        or (
+                            i_sample
+                            - (
+                                self.drift_detected_indices[-1]
+                                + self.retrain_new_samples
+                            )
+                        )
+                        >= self.window_size
+                    ) and i_sample >= self.window_size:
                         # Update metrics
                         for name in self.metrics_pred:
                             self.metric_results_pred[name][
@@ -180,7 +192,7 @@ class DriftExperiment:
                             self.drift_detector is not None
                             and self.drift_detector.drift_detected
                         ):
-                            drift_detected_indices.append(i_sample)
+                            self.drift_detected_indices.append(i_sample)
                             self.drift_detector.reset()
 
                             self.logger.warn(f"Drift detected at {i_sample}")
@@ -217,4 +229,4 @@ class DriftExperiment:
                                 break  # Break chunk for-loop
 
                 if not has_retrained:
-                    i_chunk_start += self.chunksize
+                    i_chunk_start += chunklength
