@@ -156,7 +156,8 @@ class DriftExperiment:
                     # Check for drifts and update metrics
                     # if window size is filled
                     if (
-                        len(self.drift_detected_indices) == 0
+                        not self.retrain_at_drift
+                        or len(self.drift_detected_indices) == 0
                         or (
                             i_sample
                             - (
