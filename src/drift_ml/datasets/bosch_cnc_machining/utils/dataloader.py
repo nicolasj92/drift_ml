@@ -329,9 +329,7 @@ class DriftDataLoader:
             return_samples.append(samples)
             return_labels.append(labels)
 
-        return_samples = np.concatenate(return_samples, axis=0)
-        return_labels = np.concatenate(return_labels, axis=0)
-        return self._postprocess(return_samples), labels
+        return self._postprocess(return_samples), return_labels
 
 
 class BoschCNCDataloader:
