@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from multiprocessing import Pool
 from tqdm.contrib.concurrent import process_map
 from sklearn.model_selection import train_test_split
 import pickle as pkl
@@ -21,10 +22,8 @@ if in_notebook():
 else:
     from tqdm import tqdm
 
-
-# TODO: Change start/end to length
-# TODO: Assert that no sample requests longer than the defined configs are allowed
 example_sudden_config = {
+    "mode": {"features": "stft", "featureset": None},
     "base_config": {
         "train_size": 0.3,
         "val_size": 0.2,
@@ -56,6 +55,7 @@ example_sudden_config = {
 }
 
 example_gradual_config = {
+    "mode": {"features": "stft", "featureset": None},
     "base_config": {
         "train_size": 0.3,
         "val_size": 0.2,
@@ -105,14 +105,17 @@ class Standardizer:
     def transform(self, X):
         return (X - self.channel_means) / self.channel_stds
 
-    def fit_transform(self, X):
+    def fit_transform(self, X, y=None):
         self.fit(X)
         return self.transform(X)
 
 
 class DriftDataLoader:
     def __init__(
-        self, baseloader, config, random_seed=42,
+        self,
+        baseloader,
+        config,
+        random_seed=42,
     ):
         np.random.seed(seed=random_seed)
         self.random_seed = random_seed
@@ -120,6 +123,13 @@ class DriftDataLoader:
         self.baseloader = baseloader
         self.baseloader.random_seed = random_seed
         self._initialize()
+
+    @property
+    def max_drift_data_length(self):
+        length = 0
+        for drift_config in self.config["drift_config"]:
+            length += drift_config["length"]
+        return length
 
     def _get_sample_ids(self, part_ids):
         sample_ids = []
@@ -142,7 +152,9 @@ class DriftDataLoader:
         else:
             part_ids = np.arange(self.baseloader.metadata["part_id"].shape[0])[
                 self.baseloader._generate_mask(
-                    config["periods"], config["machines"], config["processes"],
+                    config["periods"],
+                    config["machines"],
+                    config["processes"],
                 )
             ]
 
@@ -229,22 +241,23 @@ class DriftDataLoader:
             else:
                 raise NotImplementedError
 
-    def access_base_samples_stft(self, dataset="train"):
-        raw_samples, labels = self.access_base_samples(dataset=dataset)
-        # return_samples_stft = []
-        # for i in range(raw_samples.shape[0]):
-        #     return_samples_stft.append(sample_stft(raw_samples[i]))
-        # return_samples = np.stack(return_samples_stft, axis=0)
-
-        return_samples = np.array(
-            process_map(sample_stft, raw_samples, chunksize=10, max_workers=12,)
-        )
-        return return_samples, labels
-
-    def access_base_samples_tsfresh(self, featureset, dataset="train"):
-        raw_samples, labels = self.access_base_samples(dataset=dataset)
-        tsfresh_features = extract_tsfresh_features(raw_samples, featureset)
-        return tsfresh_features, labels
+    def _postprocess(self, raw_samples):
+        if self.config["mode"]["features"] == "raw":
+            return raw_samples
+        elif self.config["mode"]["features"] == "stft":
+            with Pool() as pool:
+                result = pool.map(
+                    sample_stft,
+                    raw_samples,
+                    chunksize=10,
+                )
+            return_samples = np.array(result)
+            return return_samples
+        elif self.config["mode"]["features"] == "tsfresh":
+            tsfresh_features = extract_tsfresh_features(
+                raw_samples, self.config["mode"]["featureset"]
+            )
+            return tsfresh_features
 
     def access_base_samples(self, dataset="train"):
         if dataset == "train":
@@ -263,24 +276,7 @@ class DriftDataLoader:
         else:
             raise ValueError
 
-        return raw_samples, labels
-
-    def access_test_drift_samples_stft(self, index, length=1):
-        raw_samples, labels = self.access_test_drift_samples(index, length=length)
-        # return_samples_stft = []
-        # for i in range(raw_samples.shape[0]):
-        #     return_samples_stft.append(sample_stft(raw_samples[i]))
-        # return_samples = np.stack(return_samples_stft, axis=0)
-
-        return_samples = np.array(
-            process_map(sample_stft, raw_samples, chunksize=10, max_workers=12,)
-        )
-        return return_samples, labels
-
-    def access_test_drift_samples_tsfresh(self, featureset, index, length=1):
-        raw_samples, labels = self.access_test_drift_samples(index, length=length)
-        tsfresh_features = extract_tsfresh_features(raw_samples, featureset)
-        return tsfresh_features, labels
+        return self._postprocess(raw_samples), labels
 
     def access_test_drift_samples(self, index, length=1):
         return_samples = []
@@ -290,8 +286,8 @@ class DriftDataLoader:
         for i, drift_config in enumerate(self.config["drift_config"]):
             if index >= (last_config_end_index + drift_config["length"]) or (
                 index + length
-            ) < (last_config_end_index):
-                print(f"skipping config {i}")
+            ) <= (last_config_end_index):
+                # print(f"skipping config {i}")
                 last_config_end_index += drift_config["length"]
                 continue
 
@@ -302,9 +298,9 @@ class DriftDataLoader:
 
             this_config_length = end_index - start_index
 
-            print(
-                f"taking {this_config_length} samples from config {i}, indices {start_index} to {end_index}"
-            )
+            # print(
+            #     f"taking {this_config_length} samples from config {i}, indices {start_index} to {end_index}"
+            # )
 
             samples = self.baseloader.sample_data_X[
                 drift_config["sample_ids"][start_index:end_index]
@@ -335,12 +331,15 @@ class DriftDataLoader:
 
         return_samples = np.concatenate(return_samples, axis=0)
         return_labels = np.concatenate(return_labels, axis=0)
-        return return_samples, return_labels
+        return self._postprocess(return_samples), labels
 
 
 class BoschCNCDataloader:
     def __init__(
-        self, metadata_path="", window_length=4096, random_seed=42,
+        self,
+        metadata_path="",
+        window_length=4096,
+        random_seed=42,
     ):
         self.random_seed = random_seed
         self.metadata_path = metadata_path
@@ -459,7 +458,9 @@ class BoschCNCDataloader:
             dataset[i] = sample_stft(self.sample_data_X[i])
         hf.close()
 
-    def load_metadata(self,):
+    def load_metadata(
+        self,
+    ):
         with open(self.metadata_path, "rb") as f:
             self.metadata = pkl.load(f)
 
@@ -737,7 +738,10 @@ class BoschCNCDataloader:
 
 class SimpleTSFreshBoschCNCDataloader(BoschCNCDataloader):
     def __init__(
-        self, metadata_path, window_length=4096, random_seed=42,
+        self,
+        metadata_path,
+        window_length=4096,
+        random_seed=42,
     ):
         super().__init__(
             window_length=window_length,
@@ -753,7 +757,10 @@ class SimpleTSFreshBoschCNCDataloader(BoschCNCDataloader):
 
 class STFTBoschCNCDataloader(BoschCNCDataloader):
     def __init__(
-        self, metadata_path, window_length=4096, random_seed=42,
+        self,
+        metadata_path,
+        window_length=4096,
+        random_seed=42,
     ):
         super().__init__(
             window_length=window_length,
@@ -778,7 +785,10 @@ class STFTBoschCNCDataloader(BoschCNCDataloader):
 
 class NPYBoschCNCDataLoader(BoschCNCDataloader):
     def __init__(
-        self, metadata_path, window_length=4096, random_seed=42,
+        self,
+        metadata_path,
+        window_length=4096,
+        random_seed=42,
     ):
         super().__init__(
             window_length=window_length,
@@ -788,7 +798,9 @@ class NPYBoschCNCDataLoader(BoschCNCDataloader):
         self.load_metadata()
 
     def load_data(
-        self, sample_data_x_path, sample_data_y_path,
+        self,
+        sample_data_x_path,
+        sample_data_y_path,
     ):
         self.sample_data_X = np.load(sample_data_x_path)
         self.sample_data_y = np.load(sample_data_y_path)
@@ -796,17 +808,21 @@ class NPYBoschCNCDataLoader(BoschCNCDataloader):
 
 class RawBoschCNCDataloader(BoschCNCDataloader):
     def __init__(
-        self, window_length=4096, random_seed=42,
+        self,
+        window_length=4096,
+        random_seed=42,
     ):
         super().__init__(
-            window_length=window_length, random_seed=random_seed,
+            window_length=window_length,
+            random_seed=random_seed,
         )
 
         self.sample_data_X = np.empty((0, self.window_length, 3), float)
         self.sample_data_y = np.empty((0), bool)
 
     def save_windowed_samples_as_npy(
-        self, sample_data_folder_path,
+        self,
+        sample_data_folder_path,
     ):
         np.save(
             os.path.join(
@@ -824,9 +840,15 @@ class RawBoschCNCDataloader(BoschCNCDataloader):
         )
 
     def save_metadata_to_file(
-        self, metadata_path,
+        self,
+        metadata_path,
     ):
-        with open(os.path.join(metadata_path,), "wb",) as f:
+        with open(
+            os.path.join(
+                metadata_path,
+            ),
+            "wb",
+        ) as f:
             pkl.dump(self.metadata, f)
         self.metadata_path = metadata_path
 

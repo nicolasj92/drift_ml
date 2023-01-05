@@ -27,22 +27,28 @@ logger.setLevel(logging.DEBUG)
 
 
 class NNClassifier:
-    def __init__(self, model=LeNet, device="cuda"):
+    def __init__(self, output_extra_dim=True, model=LeNet, device="cuda"):
         self.model = model()
         self.device = device
+        self.output_extra_dim = output_extra_dim
         self.model.to(self.device)
 
     def predict(self, X, threshold=0.5, temperature=1.0, return_scores=False):
         y_probs = self.predict_proba(X, temperature=temperature)
-        y = np.zeros_like(y_probs)
-        y[y_probs > threshold] = 1
+
+        if self.output_extra_dim:
+            y = np.argmax(y_probs, axis=1)
+        else:
+            y = np.zeros_like(y_probs)
+            y[y_probs > threshold] = 1
+
         if return_scores:
             return y, y_probs
         else:
             return y
 
     def predict_proba(self, X, temperature=1.0):
-        return (
+        probs = (
             self.model.predict_proba(
                 tensor(X).to(self.device).float(),
                 temperature=tensor(temperature).to(self.device),
@@ -51,20 +57,28 @@ class NNClassifier:
             .cpu()
             .numpy()
         )
+        if self.output_extra_dim:
+            extended_probs = np.zeros((probs.shape[0], 2))
+            extended_probs[:, 0] = 1 - probs
+            extended_probs[:, 1] = probs
+            return extended_probs
+
+        else:
+            return probs
 
     def fit(
         self,
         train_X,
         train_y,
-        val_X,
-        val_y,
-        batch_size=64,
-        lrate=1e-3,
-        epochs=100,
+        val_X=None,
+        val_y=None,
+        batch_size=128,
+        lrate=1e-2,
+        epochs=20,
         class_weighted_sampling=True,
-        verbose=False,
+        verbose=True,
         show_final_val_performance=True,
-        return_self=True,
+        return_self=False,
     ):
         if verbose:
             logging.debug(
@@ -90,8 +104,9 @@ class NNClassifier:
             train_set, sampler=train_sampler, batch_size=batch_size
         )
 
-        val_X = tensor(val_X).to(self.device)
-        val_y = tensor(val_y)
+        if val_X is not None and val_y is not None:
+            val_X = tensor(val_X).to(self.device)
+            val_y = tensor(val_y)
 
         auroc = BinaryAUROC()
         auprc = BinaryAveragePrecision()
@@ -108,6 +123,7 @@ class NNClassifier:
 
             for idx, (X, y) in enumerate(train_loader):
                 X, y = X.to(self.device), y.to(self.device)
+
                 sgd.zero_grad()
                 predict_y = self.model(X.float())
 
@@ -115,22 +131,33 @@ class NNClassifier:
 
                 if verbose and idx % 10 == 0:
                     pbar.set_description(
-                        f"Epoch {epoch}, Loss {loss:.5f} Val. AUROC {auroc_score:.2f}, AURPC {auprc_score:.2f}, F1 {f1_score:.2f}"
+                        f"Epoch {epoch + 1}, Loss {loss:.5f} Val. AUROC {auroc_score:.2f}, AURPC {auprc_score:.2f}, F1 {f1_score:.2f}"
                     )
 
                 loss.backward()
                 sgd.step()
 
-            self.model.eval()
-            predict_probs = tensor(self.predict_proba(val_X.float()))
-            auroc_score = auroc(predict_probs, val_y.float())
-            auprc_score = auprc(predict_probs, val_y.float())
-            f1_score = f1(predict_probs, val_y.float())
+            if val_X is not None and val_y is not None:
+                self.model.eval()
+                predict_probs = tensor(self.predict_proba(val_X.float()))
+
+                if self.output_extra_dim:
+                    auroc_score = auroc(predict_probs[:, 1], val_y.float())
+                    auprc_score = auprc(predict_probs[:, 1], val_y.float())
+                    f1_score = f1(predict_probs[:, 1], val_y.float())
+                else:
+                    auroc_score = auroc(predict_probs, val_y.float())
+                    auprc_score = auprc(predict_probs, val_y.float())
+                    f1_score = f1(predict_probs, val_y.float())
 
             if verbose:
                 pbar.update(1)
 
-        if verbose or show_final_val_performance:
+        if (
+            val_X is not None
+            and val_y is not None
+            and (verbose or show_final_val_performance)
+        ):
             logging.debug(
                 f"Final val. performance: AUROC {auroc_score:.2f}, AURPC {auprc_score:.2f}, F1 {f1_score:.2f}"
             )
