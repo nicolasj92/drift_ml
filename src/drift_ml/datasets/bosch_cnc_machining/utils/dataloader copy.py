@@ -168,7 +168,6 @@ class DriftDataLoader:
             ]
 
         sample_ids = self._get_sample_ids(part_ids)
-        np.random.shuffle(sample_ids)
         return sample_ids, part_ids
 
     def _initialize(self):
@@ -223,16 +222,36 @@ class DriftDataLoader:
             if drift_config["type"] == "constant":
                 sample_ids, part_ids = self._get_ids_for_config(drift_config)
                 self.config["drift_config"][i]["part_ids"] = part_ids
+                self.config["drift_config"][i]["sample_ids"] = sample_ids
 
-                if drift_config["length"] is not None:
-                    self.config["drift_config"][i]["sample_ids"] = np.random.choice(
-                        sample_ids, drift_config["length"], replace=True
-                    )
-                else:
-                    self.config["drift_config"][i]["sample_ids"] = sample_ids
-                    self.config["drift_config"][i]["length"] = len(sample_ids)
-            else:
-                raise ValueError
+                # self.config["drift_config"][i]["sample_ids"] = np.random.choice(
+                #     sample_ids, drift_config["length"], replace=True
+                # )
+
+            # elif drift_config["type"] == "linear":
+            #     sample_ids_part_1 = np.random.choice(
+            #         self._get_ids_for_config(drift_config["part_1"]),
+            #         drift_config["length"],
+            #         replace=True,
+            #     )
+            #     sample_ids_part_2 = np.random.choice(
+            #         self._get_ids_for_config(drift_config["part_2"]),
+            #         drift_config["length"],
+            #         replace=True,
+            #     )
+            #     probs = np.linspace(start=0, stop=1, num=drift_config["length"])
+            #     sampling_choice = np.random.binomial(n=drift_config["length"], p=probs)
+            #     sample_indices = np.zeros_like(probs, dtype=np.int32)
+            #     sample_indices[sampling_choice == 0] = sample_ids_part_1[
+            #         sampling_choice == 0
+            #     ]
+            #     sample_indices[sampling_choice == 1] = sample_ids_part_2[
+            #         sampling_choice == 1
+            #     ]
+            #     self.config["drift_config"][i]["sample_ids"] = sample_indices
+            #     self.config["drift_config"][i]["sampling_choice"] = sampling_choice
+            # else:
+            #     raise NotImplementedError
 
     def _postprocess(self, raw_samples):
         if self.config["mode"]["features"] == "raw":
@@ -270,53 +289,6 @@ class DriftDataLoader:
             raise ValueError
 
         return self._postprocess(raw_samples), labels
-
-    def access_retrain_drift_samples(self, index, n_parts, remove_parts=True):
-        # Check which config we are in
-        last_config_end_index = 0
-        for i, drift_config in enumerate(self.config["drift_config"]):
-            if (
-                index >= last_config_end_index
-                and index < last_config_end_index + drift_config["length"]
-            ):
-
-                print(f"Config {i} length is {drift_config['length']}")
-
-                retrain_inds = np.random.choice(
-                    len(drift_config["part_ids"]), n_parts, replace=False
-                )
-                retrain_part_ids = drift_config["part_ids"][retrain_inds]
-                retrain_sample_ids = self._get_sample_ids(retrain_part_ids)
-                samples = self.baseloader.sample_data_X[retrain_sample_ids]
-                labels = self.baseloader.sample_data_y[retrain_sample_ids]
-
-                print(f"Taking {n_parts} parts with {len(retrain_sample_ids)} samples")
-
-                if remove_parts:
-                    # Delete parts from this config and regenerate the remaining sample list
-                    self.config["drift_config"][i]["part_ids"] = np.delete(
-                        self.config["drift_config"][i]["part_ids"], retrain_inds
-                    )
-                    remaining_sample_ids = self._get_sample_ids(
-                        self.config["drift_config"][i]["part_ids"]
-                    )
-                    remaining_length = (
-                        drift_config["length"]
-                        - (index - last_config_end_index)
-                        - len(retrain_sample_ids)
-                    )
-
-                    print(f"Remaining length is {remaining_length}")
-
-                    self.config["drift_config"][i]["sample_ids"][
-                        -remaining_length:
-                    ] = np.random.choice(
-                        remaining_sample_ids, remaining_length, replace=True
-                    )
-
-                return self._postprocess(samples), labels
-
-            last_config_end_index += drift_config["length"]
 
     def access_test_drift_samples(self, index, length=1):
         return_samples = []
